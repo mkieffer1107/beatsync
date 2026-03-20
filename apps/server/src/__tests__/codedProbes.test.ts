@@ -28,6 +28,15 @@ void mock.module("@/utils/responses", () => ({
 
 const ROOM_ID = "probe-test-room";
 
+/** Extract parsed NTP_RESPONSE messages sent directly via ws.send (fast path) */
+function getNtpResponsesFromWs(ws: ReturnType<typeof createMockWs>) {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const sendMock = ws.send as ReturnType<typeof mock>;
+  return sendMock.mock.calls
+    .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+    .filter((m) => m.type === "NTP_RESPONSE");
+}
+
 // Inline the pure function logic (same as apps/client/src/utils/ntp.ts isProbeGapPure)
 // to test without cross-package import
 function isProbeGapPure(data: { t0First: number; t0Second: number; t1First: number; t1Second: number }): boolean {
@@ -63,15 +72,15 @@ describe("coded probes", () => {
         server
       );
 
-      const response = unicastMessages.find((m) => m.type === "NTP_RESPONSE");
-      expect(response).toBeTruthy();
-      if (response?.type === "NTP_RESPONSE") {
-        expect(response.probeGroupId).toBe(42);
-        expect(response.probeGroupIndex).toBe(0);
-        expect(response.t0).toBe(1000);
-        expect(response.t1).toBeGreaterThan(0);
-        expect(response.t2).toBeGreaterThan(0);
-      }
+      // NTP fast path sends directly via ws.send, not sendUnicast
+      const responses = getNtpResponsesFromWs(ws);
+      expect(responses).toHaveLength(1);
+      const response = responses[0];
+      expect(response.probeGroupId).toBe(42);
+      expect(response.probeGroupIndex).toBe(0);
+      expect(response.t0).toBe(1000);
+      expect(response.t1).toBeGreaterThan(0);
+      expect(response.t2).toBeGreaterThan(0);
     });
 
     it("should echo probeGroupIndex 1 for the second probe", async () => {
@@ -89,12 +98,11 @@ describe("coded probes", () => {
         server
       );
 
-      const response = unicastMessages.find((m) => m.type === "NTP_RESPONSE");
-      expect(response).toBeTruthy();
-      if (response?.type === "NTP_RESPONSE") {
-        expect(response.probeGroupId).toBe(42);
-        expect(response.probeGroupIndex).toBe(1);
-      }
+      const responses = getNtpResponsesFromWs(ws);
+      expect(responses).toHaveLength(1);
+      const response = responses[0];
+      expect(response.probeGroupId).toBe(42);
+      expect(response.probeGroupIndex).toBe(1);
     });
 
     it("should reject NTP requests without probe fields", async () => {

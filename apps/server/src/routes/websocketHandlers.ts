@@ -4,7 +4,7 @@ import { sendBroadcast, sendToClient, sendUnicast } from "@/utils/responses";
 import type { BunServer, WSData } from "@/utils/websocket";
 import { dispatchMessage } from "@/websocket/dispatch";
 import type { WSBroadcastType } from "@beatsync/shared";
-import { ClientActionEnum, epochNow, WSRequestSchema } from "@beatsync/shared";
+import { epochNow, WSRequestSchema } from "@beatsync/shared";
 import type { ServerWebSocket } from "bun";
 
 const createClientUpdate = (roomId: string) => {
@@ -162,21 +162,50 @@ export const handleOpen = (ws: ServerWebSocket<WSData>, server: BunServer) => {
 };
 
 export const handleMessage = async (ws: ServerWebSocket<WSData>, message: string | Buffer, server: BunServer) => {
-  const t1 = epochNow(); // Always calculate this immediately
+  const t1 = epochNow(); // Always capture immediately on receive
   const { roomId, username } = ws.data;
 
   try {
     const parsedData: unknown = JSON.parse(message.toString());
+
+    // Fast path: NTP requests skip Zod validation and dispatch overhead.
+    // t1 is already captured above; t2 is captured right before ws.send()
+    // to minimize server processing time contaminating the timestamps.
+    if ((parsedData as { type?: string })?.type === "NTP_REQUEST") {
+      const msg = parsedData as {
+        t0: number;
+        clientRTT?: number;
+        clientCompensationMs?: number;
+        clientNudgeMs?: number;
+        probeGroupId: number;
+        probeGroupIndex: number;
+      };
+
+      const room = globalManager.getRoom(roomId);
+      if (room) {
+        room.processNTPRequestFrom({
+          clientId: ws.data.clientId,
+          clientRTT: msg.clientRTT,
+          clientCompensationMs: msg.clientCompensationMs,
+          clientNudgeMs: msg.clientNudgeMs,
+        });
+      }
+
+      // Capture t2 as late as possible — right before send
+      const response = JSON.stringify({
+        type: "NTP_RESPONSE",
+        t0: msg.t0,
+        t1,
+        t2: epochNow(),
+        probeGroupId: msg.probeGroupId,
+        probeGroupIndex: msg.probeGroupIndex,
+      });
+      ws.send(response);
+      return;
+    }
+
     const parsedMessage = WSRequestSchema.parse(parsedData);
-
-    if (parsedMessage.type !== ClientActionEnum.enum.NTP_REQUEST) {
-      console.log(`[Room: ${roomId}] | User: ${username} | Message: ${JSON.stringify(parsedMessage)}`);
-    }
-
-    if (parsedMessage.type === ClientActionEnum.enum.NTP_REQUEST) {
-      // Manually mutate the message to include the t1 timestamp
-      parsedMessage.t1 = t1;
-    }
+    console.log(`[Room: ${roomId}] | User: ${username} | Message: ${JSON.stringify(parsedMessage)}`);
 
     // Delegate to type-safe dispatcher
     await dispatchMessage({ ws, message: parsedMessage, server });
