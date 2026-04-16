@@ -42,7 +42,7 @@ export const Queue = ({ className, ...rest }: React.ComponentProps<"div">) => {
       const newIndex = audioSources.findIndex((src) => src.source.url === over.id);
       const newAudioSources = arrayMove(audioSources, oldIndex, newIndex);
 
-      const modified = newAudioSources.map((it) => ({ url: it.source.url }));
+      const modified = newAudioSources.map((it) => it.source);
       broadcastReorder(modified);
     }
   }

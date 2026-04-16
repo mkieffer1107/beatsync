@@ -6,7 +6,7 @@ import {
   PlayActionSchema,
   SetPlaybackControlsSchema,
 } from "./WSRequest";
-import { AudioSourceSchema, ChatMessageSchema, PositionSchema } from "./basic";
+import { AudioSourceSchema, ChatMessageSchema, PlaylistSchema, PositionSchema } from "./basic";
 
 // Client change
 export const ClientDataSchema = z.object({
@@ -36,6 +36,12 @@ const SetAudioSourcesSchema = z.object({
 });
 export type SetAudioSourcesType = z.infer<typeof SetAudioSourcesSchema>;
 
+const SetPlaylistsSchema = z.object({
+  type: z.literal("SET_PLAYLISTS"),
+  playlists: z.array(PlaylistSchema),
+});
+export type SetPlaylistsType = z.infer<typeof SetPlaylistsSchema>;
+
 // Chat update event
 const ChatUpdateSchema = z.object({
   type: z.literal("CHAT_UPDATE"),
@@ -57,6 +63,7 @@ const RoomEventSchema = z.object({
   event: z.discriminatedUnion("type", [
     ClientChangeMessageSchema,
     SetAudioSourcesSchema,
+    SetPlaylistsSchema,
     SetPlaybackControlsSchema,
     ChatUpdateSchema,
     LoadAudioSourceSchema,

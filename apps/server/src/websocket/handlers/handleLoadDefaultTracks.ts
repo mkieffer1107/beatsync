@@ -1,5 +1,5 @@
 import { IS_DEMO_MODE } from "@/demo";
-import { listObjectsWithPrefix } from "@/lib/r2";
+import { getPublicUrlForKey, listObjectsWithPrefix, observePublicBaseUrl } from "@/lib/r2";
 import { sendBroadcast } from "@/utils/responses";
 import { requireCanMutate } from "@/websocket/middlewares";
 import type { HandlerFunction } from "@/websocket/types";
@@ -11,14 +11,22 @@ export const handleLoadDefaultTracks: HandlerFunction<ExtractWSRequestFrom["LOAD
 }) => {
   if (IS_DEMO_MODE) return;
   const { room } = requireCanMutate(ws);
+  observePublicBaseUrl(ws.data.serverOrigin);
 
-  // List default objects from R2 and map to public URLs
+  // List default objects from active storage and map to public URLs
   const objects = await listObjectsWithPrefix("default/");
   if (!objects || objects.length === 0) {
     return;
   }
 
-  const urls = objects.filter((obj) => !!obj.Key).map((obj) => ({ url: `${process.env.S3_PUBLIC_URL}/${obj.Key}` }));
+  const urls = objects
+    .filter((obj) => !!obj.Key)
+    .map((obj) => ({
+      url: getPublicUrlForKey(obj.Key!, ws.data.serverOrigin),
+      title: obj.Key?.split("/")
+        .pop()
+        ?.replace(/\.[^/.]+$/, ""),
+    }));
 
   // Existing room sources and simple URL set for dedupe
   const existingUrlSet = new Set(room.getAudioSources().map((s) => s.url));

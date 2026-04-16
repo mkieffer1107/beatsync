@@ -29,6 +29,12 @@ export const ClientActionEnum = z.enum([
   "DELETE_AUDIO_SOURCES", // Delete audio sources from the room queue (non-default only)
   "SEARCH_MUSIC", // Search for music
   "STREAM_MUSIC", // Stream music
+  "IMPORT_YOUTUBE", // Import a YouTube video or playlist
+  "QUEUE_PLAYLIST", // Add an existing playlist back into the room queue
+  "CREATE_PLAYLIST", // Create a playlist object in the room
+  "UPDATE_PLAYLIST", // Update playlist metadata
+  "DELETE_PLAYLIST", // Delete a playlist object from the room
+  "SET_PLAYLIST_TRACKS", // Replace the ordered tracks in a playlist
   "SET_GLOBAL_VOLUME", // Set global volume for all clients
   "SEND_CHAT_MESSAGE", // Send a chat message,
   "AUDIO_SOURCE_LOADED", // Audio source loaded in response to a LOAD_AUDIO_SOURCE request
@@ -131,6 +137,42 @@ export const StreamMusicSchema = z.object({
   trackName: z.string().optional(),
 });
 
+export const ImportYoutubeSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.IMPORT_YOUTUBE),
+  url: z.string().url(),
+  mode: z.enum(["video", "playlist"]).optional(),
+});
+
+export const QueuePlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.QUEUE_PLAYLIST),
+  playlistId: z.string().min(1),
+});
+
+export const CreatePlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.CREATE_PLAYLIST),
+  playlistId: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(120),
+  trackUrls: z.array(z.string()).default([]).optional(),
+});
+
+export const UpdatePlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.UPDATE_PLAYLIST),
+  playlistId: z.string(),
+  name: z.string().trim().min(1).max(120).optional(),
+  artworkUrl: z.union([z.string().url(), z.null()]).optional(),
+});
+
+export const DeletePlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.DELETE_PLAYLIST),
+  playlistId: z.string(),
+});
+
+export const SetPlaylistTracksSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SET_PLAYLIST_TRACKS),
+  playlistId: z.string(),
+  trackUrls: z.array(z.string()).default([]),
+});
+
 export const SetGlobalVolumeSchema = z.object({
   type: z.literal(ClientActionEnum.enum.SET_GLOBAL_VOLUME),
   volume: z.number().min(0).max(1), // 0-1 range
@@ -143,7 +185,9 @@ export const SendChatMessageSchema = z.object({
 
 export const AudioSourceLoadedSchema = z.object({
   type: z.literal(ClientActionEnum.enum.AUDIO_SOURCE_LOADED),
-  source: AudioSourceSchema,
+  source: z.object({
+    url: z.string(),
+  }),
 });
 
 export const ReorderAudioSourcesSchema = z.object({
@@ -178,6 +222,12 @@ export const WSRequestSchema = z.discriminatedUnion("type", [
   DeleteAudioSourcesSchema,
   SearchMusicSchema,
   StreamMusicSchema,
+  ImportYoutubeSchema,
+  QueuePlaylistSchema,
+  CreatePlaylistSchema,
+  UpdatePlaylistSchema,
+  DeletePlaylistSchema,
+  SetPlaylistTracksSchema,
   SetGlobalVolumeSchema,
   SendChatMessageSchema,
   AudioSourceLoadedSchema,

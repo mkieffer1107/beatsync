@@ -48,7 +48,7 @@ export const handleOpen = (ws: ServerWebSocket<WSData>, server: BunServer) => {
   const room = globalManager.getOrCreateRoom(roomId);
   room.addClient(ws);
 
-  const { audioSources, globalVolume, lowPassFreq } = room.getState();
+  const { audioSources, playlists, globalVolume, lowPassFreq } = room.getState();
   const now = epochNow();
 
   // Send audio sources to the newly joined client
@@ -67,6 +67,17 @@ export const handleOpen = (ws: ServerWebSocket<WSData>, server: BunServer) => {
       },
     });
   }
+
+  sendToClient({
+    ws,
+    message: {
+      type: "ROOM_EVENT",
+      event: {
+        type: "SET_PLAYLISTS",
+        playlists,
+      },
+    },
+  });
 
   sendToClient({
     ws,

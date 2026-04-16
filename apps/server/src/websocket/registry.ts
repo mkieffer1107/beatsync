@@ -1,13 +1,19 @@
 import { ClientActionEnum } from "@beatsync/shared";
 import { handleAudioSourceLoaded } from "@/websocket/handlers/handleAudioSourceLoaded";
 import { handleDeleteAudioSources } from "@/websocket/handlers/handleDeleteAudioSources";
+import { handleDeletePlaylist } from "@/websocket/handlers/handleDeletePlaylist";
 import { handleLoadDefaultTracks } from "@/websocket/handlers/handleLoadDefaultTracks";
+import { handleCreatePlaylist } from "@/websocket/handlers/handleCreatePlaylist";
+import { handleQueuePlaylist } from "@/websocket/handlers/handleQueuePlaylist";
 import { handleSearchMusic } from "@/websocket/handlers/handleSearchMusic";
 import { handleSendChatMessage } from "@/websocket/handlers/handleSendChatMessage";
 import { handleSendIp } from "@/websocket/handlers/handleSendIp";
 import { handleSetAdmin } from "@/websocket/handlers/handleSetAdmin";
 import { handleSetPlaybackControls } from "@/websocket/handlers/handleSetPlaybackControls";
+import { handleSetPlaylistTracks } from "@/websocket/handlers/handleSetPlaylistTracks";
 import { handleStreamMusic } from "@/websocket/handlers/handleStreamMusic";
+import { handleImportYoutube } from "@/websocket/handlers/handleImportYoutube";
+import { handleUpdatePlaylist } from "@/websocket/handlers/handleUpdatePlaylist";
 import { handleMoveClient } from "@/websocket/handlers/moveClient";
 import { handleNTPRequest } from "@/websocket/handlers/ntpRequest";
 import { handlePause } from "@/websocket/handlers/pause";
@@ -105,6 +111,36 @@ export const WS_REGISTRY: WebsocketRegistry = {
   [ClientActionEnum.enum.STREAM_MUSIC]: {
     handle: handleStreamMusic,
     description: "Stream music",
+  },
+
+  [ClientActionEnum.enum.IMPORT_YOUTUBE]: {
+    handle: handleImportYoutube,
+    description: "Import a YouTube video or playlist",
+  },
+
+  [ClientActionEnum.enum.QUEUE_PLAYLIST]: {
+    handle: handleQueuePlaylist,
+    description: "Move playlist tracks to the front of the room queue",
+  },
+
+  [ClientActionEnum.enum.CREATE_PLAYLIST]: {
+    handle: handleCreatePlaylist,
+    description: "Create a playlist object in the room",
+  },
+
+  [ClientActionEnum.enum.UPDATE_PLAYLIST]: {
+    handle: handleUpdatePlaylist,
+    description: "Update playlist metadata",
+  },
+
+  [ClientActionEnum.enum.DELETE_PLAYLIST]: {
+    handle: handleDeletePlaylist,
+    description: "Delete a playlist object from the room",
+  },
+
+  [ClientActionEnum.enum.SET_PLAYLIST_TRACKS]: {
+    handle: handleSetPlaylistTracks,
+    description: "Replace the ordered tracks in a playlist",
   },
 
   [ClientActionEnum.enum.SET_GLOBAL_VOLUME]: {

@@ -3,8 +3,14 @@ import { audioContextManager, isAudioContextPaused } from "@/lib/audioContextMan
 import { getClientId } from "@/lib/clientId";
 import { getKickBuffer } from "@/components/dashboard/Metronome";
 import { IS_DEMO_MODE } from "@/lib/demo";
+import {
+  derivePlaylistsFromAudioSources,
+  findPlaylistIdForTrack,
+  normalizePlaylists,
+  PlaylistLibraryItem,
+} from "@/lib/playlistLibrary";
 import { getApiUrl } from "@/lib/urls";
-import { extractFileNameFromUrl } from "@/lib/utils";
+import { extractFileNameFromUrl, getAudioSourceDisplayName } from "@/lib/utils";
 import {
   calculateOffsetEstimate,
   calculateWaitTimeMilliseconds,
@@ -88,6 +94,10 @@ export type AudioSourceState = z.infer<typeof AudioSourceStateSchema>;
 interface GlobalStateValues {
   // Audio Sources
   audioSources: AudioSourceState[]; // Playlist with loading states
+  playlists: PlaylistLibraryItem[];
+  playlistLibraryOrigin: "derived" | "server" | null;
+  playlistServerPayload: unknown[] | null;
+  selectedPlaylistId: string | null;
   bufferAccessQueue: string[]; // Track URL access order for LRU eviction
   isInitingSystem: boolean;
   hasUserStartedSystem: boolean; // Track if user has clicked "Start System" at least once
@@ -165,7 +175,10 @@ interface GlobalState extends GlobalStateValues {
   // Methods
   getAudioDuration: ({ url }: { url: string }) => number;
   getSelectedTrack: () => AudioSourceState | null;
+  getSelectedPlaylist: () => PlaylistLibraryItem | null;
   handleSetAudioSources: (data: SetAudioSourcesType) => void;
+  setSelectedPlaylistId: (playlistId: string | null) => void;
+  syncPlaylists: (playlists: unknown) => void;
 
   setIsInitingSystem: (isIniting: boolean) => void;
   reorderClient: (clientId: string) => void;
@@ -239,6 +252,10 @@ interface GlobalState extends GlobalStateValues {
 const initialState: GlobalStateValues = {
   // Audio Sources
   audioSources: [],
+  playlists: [],
+  playlistLibraryOrigin: null,
+  playlistServerPayload: null,
+  selectedPlaylistId: null,
   bufferAccessQueue: [],
 
   // Audio playback state
@@ -322,6 +339,59 @@ const getSocket = (state: GlobalState) => {
   }
   return {
     socket: state.socket,
+  };
+};
+
+const selectPreferredPlaylistId = ({
+  nextPlaylists,
+  previousPlaylistId,
+  selectedAudioUrl,
+}: {
+  nextPlaylists: PlaylistLibraryItem[];
+  previousPlaylistId: string | null;
+  selectedAudioUrl: string | null;
+}) => {
+  if (!nextPlaylists.length) {
+    return null;
+  }
+
+  if (previousPlaylistId && nextPlaylists.some((playlist) => playlist.id === previousPlaylistId)) {
+    return previousPlaylistId;
+  }
+
+  const matchingPlaylistId = findPlaylistIdForTrack(nextPlaylists, selectedAudioUrl);
+  if (matchingPlaylistId) {
+    return matchingPlaylistId;
+  }
+
+  return nextPlaylists[0]?.id ?? null;
+};
+
+const resolvePlaylistLibrary = ({
+  sources,
+  currentPlaylists,
+  serverPayload,
+}: {
+  sources: AudioSourceType[];
+  currentPlaylists: PlaylistLibraryItem[];
+  serverPayload: unknown[] | null;
+}) => {
+  const playlistSource = serverPayload ?? currentPlaylists;
+
+  if (Array.isArray(playlistSource) && playlistSource.length > 0) {
+    const normalizedServerPlaylists = normalizePlaylists(playlistSource, sources);
+    if (normalizedServerPlaylists.length > 0) {
+      return {
+        playlists: normalizedServerPlaylists,
+        origin: "server" as const,
+      };
+    }
+  }
+
+  const derivedPlaylists = derivePlaylistsFromAudioSources(sources);
+  return {
+    playlists: derivedPlaylists,
+    origin: derivedPlaylists.length > 0 ? ("derived" as const) : null,
   };
 };
 
@@ -722,8 +792,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       }
 
       // Reset timing state and update selected ID
+      const nextSelectedPlaylistId = findPlaylistIdForTrack(state.playlists, url) ?? state.selectedPlaylistId;
       set({
         selectedAudioUrl: url,
+        selectedPlaylistId: nextSelectedPlaylistId,
         isPlaying: false, // Always stop playback on track change before potentially restarting
         currentTime: 0,
         playbackStartTime: 0,
@@ -781,7 +853,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
           // Update state and schedule on audio thread (sample-accurate)
           if (data.audioSource !== state.selectedAudioUrl) {
-            set({ selectedAudioUrl: data.audioSource });
+            set({
+              selectedAudioUrl: data.audioSource,
+              selectedPlaylistId: findPlaylistIdForTrack(state.playlists, data.audioSource) ?? state.selectedPlaylistId,
+            });
           }
           const audioIndex = state.findAudioIndexByUrl(data.audioSource);
           if (audioIndex === null) return;
@@ -805,7 +880,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       // Update the selected audio ID
       if (data.audioSource !== state.selectedAudioUrl) {
-        set({ selectedAudioUrl: data.audioSource });
+        set({
+          selectedAudioUrl: data.audioSource,
+          selectedPlaylistId: findPlaylistIdForTrack(state.playlists, data.audioSource) ?? state.selectedPlaylistId,
+        });
       }
 
       // Find the index of the audio to play
@@ -851,6 +929,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
           audioPlayer: { ...get().audioPlayer!, sourceNode: newSourceNode },
           isPlaying: true,
           selectedAudioUrl: data.audioSource,
+          selectedPlaylistId: findPlaylistIdForTrack(get().playlists, data.audioSource) ?? get().selectedPlaylistId,
           playbackStartTime: startTime,
           playbackOffset: data.trackTimeSeconds,
           duration: audioSourceState.buffer!.duration,
@@ -865,7 +944,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         }
 
         console.warn(`Cannot play audio: Track still loading: ${data.audioSource}`);
-        toast.warning(`"${extractFileNameFromUrl(data.audioSource)}" not loaded yet...`, { id: "schedulePlay" });
+        const displayName = audioSourceState
+          ? getAudioSourceDisplayName(audioSourceState.source)
+          : extractFileNameFromUrl(data.audioSource);
+        toast.warning(`"${displayName}" not loaded yet...`, { id: "schedulePlay" });
 
         const { socket } = getSocket(state);
         setTimeout(() => {
@@ -951,8 +1033,22 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         const existing = state.audioSources.find((as) => as.source.url === source.url);
         return existing || { source, status: "idle" };
       });
+      const nextPlaylistLibrary = resolvePlaylistLibrary({
+        sources: newAudioSources.map((audioSource) => audioSource.source),
+        currentPlaylists: state.playlists,
+        serverPayload: state.playlistServerPayload,
+      });
 
-      set({ audioSources: newAudioSources });
+      set({
+        audioSources: newAudioSources,
+        playlists: nextPlaylistLibrary.playlists,
+        playlistLibraryOrigin: nextPlaylistLibrary.origin,
+        selectedPlaylistId: selectPreferredPlaylistId({
+          nextPlaylists: nextPlaylistLibrary.playlists,
+          previousPlaylistId: state.selectedPlaylistId,
+          selectedAudioUrl: state.selectedAudioUrl,
+        }),
+      });
 
       sendWSRequest({
         ws: socket,
@@ -1432,6 +1528,13 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       return state.audioSources.find((as) => as.source.url === state.selectedAudioUrl) || null;
     },
 
+    getSelectedPlaylist: () => {
+      const state = get();
+      if (!state.selectedPlaylistId) return null;
+
+      return state.playlists.find((playlist) => playlist.id === state.selectedPlaylistId) ?? null;
+    },
+
     async handleSetAudioSources({ sources, currentAudioSource }) {
       // Wait for audio initialization to complete if it's in progress
       if (initializationMutex.isLocked()) {
@@ -1476,12 +1579,33 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         };
       });
 
+      const nextPlaylistLibrary = resolvePlaylistLibrary({
+        sources,
+        currentPlaylists: state.playlists,
+        serverPayload: state.playlistServerPayload,
+      });
+      const nextSelectedPlaylistId = selectPreferredPlaylistId({
+        nextPlaylists: nextPlaylistLibrary.playlists,
+        previousPlaylistId: state.selectedPlaylistId,
+        selectedAudioUrl: currentAudioSource ?? state.selectedAudioUrl,
+      });
+
       // Update state immediately to show all sources (with idle states) and cleaned queue
-      set({ audioSources: newAudioSources, bufferAccessQueue: newQueue });
+      set({
+        audioSources: newAudioSources,
+        bufferAccessQueue: newQueue,
+        playlists: nextPlaylistLibrary.playlists,
+        playlistLibraryOrigin: nextPlaylistLibrary.origin,
+        selectedPlaylistId: nextSelectedPlaylistId,
+      });
 
       // If currentAudioSource is provided from server, update selectedAudioUrl and start loading it
       if (currentAudioSource) {
-        set({ selectedAudioUrl: currentAudioSource });
+        set({
+          selectedAudioUrl: currentAudioSource,
+          selectedPlaylistId:
+            findPlaylistIdForTrack(nextPlaylistLibrary.playlists, currentAudioSource) ?? nextSelectedPlaylistId,
+        });
         loadAudioSource(currentAudioSource);
       }
 
@@ -1501,8 +1625,63 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         }
 
         // Clear selected track - don't auto-select another
-        set({ selectedAudioUrl: "" });
+        set({
+          selectedAudioUrl: "",
+          selectedPlaylistId: selectPreferredPlaylistId({
+            nextPlaylists: nextPlaylistLibrary.playlists,
+            previousPlaylistId: state.selectedPlaylistId,
+            selectedAudioUrl: "",
+          }),
+        });
       }
+    },
+
+    setSelectedPlaylistId: (playlistId) => {
+      const { playlists, selectedAudioUrl } = get();
+      const normalizedPlaylistId =
+        playlistId && playlists.some((playlist) => playlist.id === playlistId) ? playlistId : null;
+
+      set({
+        selectedPlaylistId:
+          normalizedPlaylistId ??
+          selectPreferredPlaylistId({
+            nextPlaylists: playlists,
+            previousPlaylistId: null,
+            selectedAudioUrl,
+          }),
+      });
+    },
+
+    syncPlaylists: (playlists) => {
+      const state = get();
+      const sources = state.audioSources.map((audioSource) => audioSource.source);
+      const normalizedPlaylists = normalizePlaylists(playlists, sources);
+
+      if (!normalizedPlaylists.length) {
+        const derivedPlaylists = derivePlaylistsFromAudioSources(sources);
+        set({
+          playlists: derivedPlaylists,
+          playlistLibraryOrigin: derivedPlaylists.length > 0 ? "derived" : null,
+          playlistServerPayload: Array.isArray(playlists) ? playlists : null,
+          selectedPlaylistId: selectPreferredPlaylistId({
+            nextPlaylists: derivedPlaylists,
+            previousPlaylistId: state.selectedPlaylistId,
+            selectedAudioUrl: state.selectedAudioUrl,
+          }),
+        });
+        return;
+      }
+
+      set({
+        playlists: normalizedPlaylists,
+        playlistLibraryOrigin: "server",
+        playlistServerPayload: Array.isArray(playlists) ? playlists : null,
+        selectedPlaylistId: selectPreferredPlaylistId({
+          nextPlaylists: normalizedPlaylists,
+          previousPlaylistId: state.selectedPlaylistId,
+          selectedAudioUrl: state.selectedAudioUrl,
+        }),
+      });
     },
 
     // Reset function to clean up state
@@ -1656,7 +1835,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
     // Audio source methods
     handleLoadAudioSource: ({ audioSourceToPlay }: LoadAudioSourceType) => {
-      set({ selectedAudioUrl: audioSourceToPlay.url });
+      set((state) => ({
+        selectedAudioUrl: audioSourceToPlay.url,
+        selectedPlaylistId: findPlaylistIdForTrack(state.playlists, audioSourceToPlay.url) ?? state.selectedPlaylistId,
+      }));
       loadAudioSource(audioSourceToPlay.url);
     },
   };

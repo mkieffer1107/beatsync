@@ -1,4 +1,5 @@
 import { DEMO_ROOM_ID, IS_DEMO_MODE, isValidAdminSecret } from "@/demo";
+import { observePublicBaseUrl } from "@/lib/r2";
 import { errorResponse } from "@/utils/responses";
 import type { BunServer, WSData } from "@/utils/websocket";
 
@@ -6,6 +7,7 @@ const CREATOR_SECRET = process.env.CREATOR_SECRET;
 
 export const handleWebSocketUpgrade = (req: Request, server: BunServer) => {
   const url = new URL(req.url);
+  observePublicBaseUrl(url.origin);
   const roomId = url.searchParams.get("roomId");
   const username = url.searchParams.get("username");
   const clientId = url.searchParams.get("clientId");
@@ -44,6 +46,7 @@ export const handleWebSocketUpgrade = (req: Request, server: BunServer) => {
     clientId,
     isAdmin,
     isCreator,
+    serverOrigin: url.origin,
   };
 
   // Upgrade the connection with the WSData context

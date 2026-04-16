@@ -1,20 +1,25 @@
 import { AUDIO_FILE_CACHE } from "@/demo";
+import { getStorageMode, serveLocalAudio } from "@/lib/r2";
 import { corsHeaders, errorResponse } from "@/utils/responses";
 
-export function handleServeAudio(pathname: string): Response {
+export async function handleServeAudio(pathname: string): Promise<Response> {
   const filename = decodeURIComponent(pathname.slice("/audio/".length));
 
   const cached = AUDIO_FILE_CACHE.get(filename);
-  if (!cached) {
-    return errorResponse("File not found", 404);
+  if (cached) {
+    return new Response(cached.bytes.buffer as ArrayBuffer, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": cached.type,
+        "Content-Length": cached.bytes.byteLength.toString(),
+        "Cache-Control": "public, max-age=3600, immutable",
+      },
+    });
   }
 
-  return new Response(cached.bytes.buffer as ArrayBuffer, {
-    headers: {
-      ...corsHeaders,
-      "Content-Type": cached.type,
-      "Content-Length": cached.bytes.byteLength.toString(),
-      "Cache-Control": "public, max-age=3600, immutable",
-    },
-  });
+  if (getStorageMode() === "local") {
+    return await serveLocalAudio(pathname);
+  }
+
+  return errorResponse("File not found", 404);
 }

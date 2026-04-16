@@ -12,6 +12,7 @@ import { validateProbePair, getProbeStats, NTPMeasurement } from "@/utils/ntp";
 import { sendWSRequest } from "@/utils/ws";
 import { ClientActionEnum, epochNow, NTPResponseMessageType, WSResponseSchema } from "@beatsync/shared";
 import { useEffect } from "react";
+import { toast } from "sonner";
 
 /**
  * Process an NTP_RESPONSE into a measurement and attempt to complete a probe pair.
@@ -27,6 +28,41 @@ const handleNTPResponse = (response: NTPResponseMessageType): NTPMeasurement | n
   const measurement: NTPMeasurement = { t0, t1, t2, t3, roundTripDelay, clockOffset };
 
   return validateProbePair({ measurement, probeGroupId, probeGroupIndex });
+};
+
+const extractPlaylistPayload = (response: unknown) => {
+  if (!response || typeof response !== "object") {
+    return null;
+  }
+
+  const record = response as Record<string, unknown>;
+  if (Array.isArray(record.playlists)) {
+    const responseType = typeof record.type === "string" ? record.type : null;
+    if (
+      responseType === "PLAYLIST_LIBRARY" ||
+      responseType === "PLAYLISTS_UPDATE" ||
+      responseType === "SET_PLAYLISTS"
+    ) {
+      return record.playlists;
+    }
+  }
+
+  const event = record.event;
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+
+  const eventRecord = event as Record<string, unknown>;
+  const eventType = typeof eventRecord.type === "string" ? eventRecord.type : null;
+  if (!Array.isArray(eventRecord.playlists)) {
+    return null;
+  }
+
+  if (eventType === "PLAYLIST_LIBRARY" || eventType === "PLAYLISTS_UPDATE" || eventType === "SET_PLAYLISTS") {
+    return eventRecord.playlists;
+  }
+
+  return null;
 };
 
 interface WebSocketManagerProps {
@@ -59,6 +95,7 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
   const handleSetAudioSources = useGlobalStore((state) => state.handleSetAudioSources);
   const setPlaybackControlsPermissions = useGlobalStore((state) => state.setPlaybackControlsPermissions);
   const setActiveStreamJobs = useGlobalStore((state) => state.setActiveStreamJobs);
+  const syncPlaylists = useGlobalStore((state) => state.syncPlaylists);
   const setMessages = useChatStore((state) => state.setMessages);
   const handleLoadAudioSource = useGlobalStore((state) => state.handleLoadAudioSource);
 
@@ -156,7 +193,19 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
       // Update last message received time for connection health
       useGlobalStore.setState({ lastMessageReceivedTime: Date.now() });
 
-      const response = WSResponseSchema.parse(JSON.parse(msg.data));
+      const rawResponse = JSON.parse(msg.data);
+      const playlistPayload = extractPlaylistPayload(rawResponse);
+      if (playlistPayload) {
+        syncPlaylists(playlistPayload);
+      }
+
+      const parsedResponse = WSResponseSchema.safeParse(rawResponse);
+      if (!parsedResponse.success) {
+        console.warn("Ignoring unsupported websocket payload", rawResponse);
+        return;
+      }
+
+      const response = parsedResponse.data;
 
       if (response.type === "NTP_RESPONSE") {
         const pairResult = handleNTPResponse(response);
@@ -239,6 +288,19 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
       } else if (response.type === "STREAM_JOB_UPDATE") {
         console.log("Received stream job update:", response.activeJobCount);
         setActiveStreamJobs(response.activeJobCount);
+      } else if (response.type === "IMPORT_STATUS") {
+        const details =
+          typeof response.importedCount === "number"
+            ? `${response.message}${response.failedCount ? ` (${response.failedCount} failed)` : ""}`
+            : response.message;
+
+        if (response.status === "error") {
+          toast.error(details);
+        } else if (response.status === "completed") {
+          toast.success(details);
+        } else {
+          toast.message(details);
+        }
       } else if (response.type === "DEMO_USER_COUNT") {
         if (useGlobalStore.getState().demoUserCount !== response.count) {
           useGlobalStore.setState({ demoUserCount: response.count });

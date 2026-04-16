@@ -14,10 +14,38 @@ export const PositionSchema = z.object({
 });
 export type PositionType = z.infer<typeof PositionSchema>;
 
+export const AudioSourceCollectionSchema = z.object({
+  type: z.enum(["youtube-playlist"]),
+  id: z.string().optional(),
+  externalId: z.string().optional(),
+  name: z.string(),
+  position: z.number().int().positive().optional(),
+});
+export type AudioSourceCollectionType = z.infer<typeof AudioSourceCollectionSchema>;
+
 export const AudioSourceSchema = z.object({
   url: z.string(),
+  title: z.string().optional(),
+  artworkUrl: z.string().url().optional(),
+  originalUrl: z.string().url().optional(),
+  sourceKind: z.enum(["upload", "provider", "youtube"]).optional(),
+  collection: AudioSourceCollectionSchema.optional(),
 });
 export type AudioSourceType = z.infer<typeof AudioSourceSchema>;
+
+export const PlaylistSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  trackUrls: z.array(z.string()).default([]),
+  tracks: z.array(AudioSourceSchema).default([]),
+  artworkUrl: z.string().url().optional(),
+  sourceKind: z.enum(["manual", "youtube"]).default("manual"),
+  externalId: z.string().optional(),
+  originalUrl: z.string().url().optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+export type PlaylistType = z.infer<typeof PlaylistSchema>;
 
 export const ChatMessageSchema = z.object({
   id: z.number(),

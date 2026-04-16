@@ -12,8 +12,9 @@ export const handleDeleteAudioSources: HandlerFunction<ExtractWSRequestFrom["DEL
 }) => {
   const { room } = requireCanMutate(ws);
 
-  // Get current URLs to validate the request
-  const currentUrls = new Set(room.getAudioSources().map((s) => s.url));
+  const currentSources = room.getAudioSources();
+  const currentPlaylists = room.getPlaylists();
+  const currentUrls = new Set(currentSources.map((source) => source.url));
 
   // Only process URLs that actually exist in the room
   const urlsToDelete = message.urls.filter((url) => currentUrls.has(url));
@@ -22,9 +23,9 @@ export const handleDeleteAudioSources: HandlerFunction<ExtractWSRequestFrom["DEL
     return; // nothing to do, silent idempotency
   }
 
-  // In demo mode, skip R2 deletion — just remove from room state
+  // In demo mode, skip storage deletion — just remove from room state
   if (IS_DEMO_MODE) {
-    const { updated } = room.removeAudioSources(urlsToDelete);
+    const { updated, playlists, playlistsChanged } = room.removeAudioSources(urlsToDelete);
     sendBroadcast({
       server,
       roomId: ws.data.roomId,
@@ -33,52 +34,85 @@ export const handleDeleteAudioSources: HandlerFunction<ExtractWSRequestFrom["DEL
         event: { type: "SET_AUDIO_SOURCES", sources: updated },
       },
     });
+    if (playlistsChanged) {
+      sendBroadcast({
+        server,
+        roomId: ws.data.roomId,
+        message: {
+          type: "ROOM_EVENT",
+          event: { type: "SET_PLAYLISTS", playlists },
+        },
+      });
+    }
     return;
   }
 
-  // First, attempt to delete room-specific files from R2 storage
-  // Track which URLs were successfully deleted from R2
+  const roomScopedPrefix = `room-${ws.data.roomId}/`;
   const successfullyDeletedUrls = new Set<string>();
-  const roomPrefix = `/room-${ws.data.roomId}/`;
 
-  // Process R2 deletions and track successes
-  const r2DeletionPromises = urlsToDelete.map(async (url) => {
-    // Always add non-R2 URLs (like default tracks) to successful list
-    if (!url.includes(roomPrefix)) {
-      successfullyDeletedUrls.add(url); // Just say we've processed it
+  const storageDeletionPromises = urlsToDelete.map(async (url) => {
+    const source = currentSources.find((candidate) => candidate.url === url);
+    if (!source) {
       return;
     }
 
-    // Otherwise we need to actually delete the file from R2
-    try {
-      const key = extractKeyFromUrl(url);
+    if (room.hasPlaylistTrack(source.url)) {
+      successfullyDeletedUrls.add(url);
+      return;
+    }
 
-      if (!key) {
-        throw new Error(`Failed to extract key from URL: ${url}`);
+    const audioKey = extractKeyFromUrl(source.url);
+
+    if (!audioKey?.startsWith(roomScopedPrefix)) {
+      successfullyDeletedUrls.add(url);
+      return;
+    }
+
+    try {
+      await deleteObject(audioKey);
+      console.log(`🗑️ Deleted storage object: ${audioKey}`);
+
+      const artworkKey = source.artworkUrl ? extractKeyFromUrl(source.artworkUrl) : null;
+      if (artworkKey && artworkKey.startsWith(roomScopedPrefix)) {
+        const artworkStillReferencedBySource = currentSources.some(
+          (candidate) => candidate.url !== source.url && candidate.artworkUrl === source.artworkUrl
+        );
+        const artworkStillReferencedByPlaylist = currentPlaylists.some(
+          (playlist) => playlist.artworkUrl === source.artworkUrl
+        );
+
+        if (artworkStillReferencedBySource || artworkStillReferencedByPlaylist) {
+          successfullyDeletedUrls.add(url);
+          return;
+        }
+
+        try {
+          await deleteObject(artworkKey);
+          console.log(`🗑️ Deleted artwork object: ${artworkKey}`);
+        } catch (artworkError) {
+          console.error(`Failed to delete artwork object for URL ${source.artworkUrl}:`, artworkError);
+        }
       }
 
-      await deleteObject(key);
-      console.log(`🗑️ Deleted R2 object: ${key}`);
       successfullyDeletedUrls.add(url);
     } catch (error) {
-      console.error(`Failed to delete R2 object for URL ${url}:`, error);
-      // Don't add to successfullyDeletedUrls - keep in room state
+      console.error(`Failed to delete storage object for URL ${source.url}:`, error);
     }
   });
 
-  // Wait for all R2 deletion attempts to complete
-  await Promise.all(r2DeletionPromises);
+  // Wait for all storage deletion attempts to complete
+  await Promise.all(storageDeletionPromises);
 
   // Only remove successfully deleted URLs from the room's queue
   const urlsToRemove = Array.from(successfullyDeletedUrls);
 
   if (urlsToRemove.length === 0) {
-    console.log("No URLs were successfully deleted from R2, keeping all in queue");
+    console.log("No URLs were successfully deleted from storage, keeping all in queue");
     return;
   }
 
   // Remove only the successfully deleted sources from room state
-  const { updated } = room.removeAudioSources(urlsToRemove);
+  const { updated, playlists, playlistsChanged } = room.removeAudioSources(urlsToRemove);
 
   // Broadcast updated queue to all clients
   sendBroadcast({
@@ -89,4 +123,15 @@ export const handleDeleteAudioSources: HandlerFunction<ExtractWSRequestFrom["DEL
       event: { type: "SET_AUDIO_SOURCES", sources: updated },
     },
   });
+
+  if (playlistsChanged) {
+    sendBroadcast({
+      server,
+      roomId: ws.data.roomId,
+      message: {
+        type: "ROOM_EVENT",
+        event: { type: "SET_PLAYLISTS", playlists },
+      },
+    });
+  }
 };

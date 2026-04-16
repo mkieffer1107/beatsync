@@ -70,8 +70,8 @@ describe("WebSocket Handlers (Simplified Tests)", () => {
         throw new Error("Expected SET_AUDIO_SOURCES");
       expect(msg.event.sources).toHaveLength(2);
       expect(msg.event.sources).toEqual([
-        { url: "https://example.com/song1.mp3" },
-        { url: "https://example.com/song2.mp3" },
+        { url: "https://example.com/song1.mp3", sourceKind: "upload" },
+        { url: "https://example.com/song2.mp3", sourceKind: "upload" },
       ]);
     });
 
@@ -128,6 +128,41 @@ describe("WebSocket Handlers (Simplified Tests)", () => {
         return msg.message.type === "ROOM_EVENT" && msg.message.event?.type === "SET_AUDIO_SOURCES";
       });
       expect(audioSourcesBroadcasts).toHaveLength(0);
+    });
+
+    it("should send existing playlists to newly joined client", () => {
+      const roomId = "playlist-room";
+      const room = globalManager.getOrCreateRoom(roomId);
+      room.addAudioSource({ url: "https://example.com/song1.mp3" });
+      room.addAudioSource({ url: "https://example.com/song2.mp3" });
+      room.createPlaylist({
+        name: "Saved Queue",
+        trackUrls: ["https://example.com/song2.mp3", "https://example.com/song1.mp3"],
+      });
+
+      const mockServer = createMockServer();
+      const ws = createMockWs({ clientId: "client-playlist", username: "playlistUser", roomId });
+
+      handleOpen(ws, mockServer);
+
+      const sentMessages = getWsSentMessages(ws);
+      const playlistsMessage = sentMessages.find(
+        (msg) => msg.type === "ROOM_EVENT" && msg.event?.type === "SET_PLAYLISTS"
+      );
+
+      expect(playlistsMessage).toBeTruthy();
+
+      const msg = playlistsMessage!;
+      if (msg.type !== "ROOM_EVENT" || msg.event.type !== "SET_PLAYLISTS") {
+        throw new Error("Expected SET_PLAYLISTS");
+      }
+
+      expect(msg.event.playlists).toHaveLength(1);
+      expect(msg.event.playlists[0]?.name).toBe("Saved Queue");
+      expect(msg.event.playlists[0]?.trackUrls).toEqual([
+        "https://example.com/song2.mp3",
+        "https://example.com/song1.mp3",
+      ]);
     });
   });
 

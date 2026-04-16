@@ -2,28 +2,24 @@ import type { UploadCompleteResponseType, UploadUrlResponseType } from "@beatsyn
 import { GetUploadUrlSchema, UploadCompleteSchema } from "@beatsync/shared";
 import type { BunServer } from "@/utils/websocket";
 import {
-  createKey,
+  createUploadTarget,
   generateAudioFileName,
-  generatePresignedUploadUrl,
-  getPublicAudioUrl,
-  validateR2Config,
+  getStorageMode,
+  handleLocalUpload as handleLocalUploadRequest,
+  observePublicBaseUrl,
+  validateAudioFileExists,
 } from "@/lib/r2";
 import { globalManager } from "@/managers";
 import { errorResponse, jsonResponse, sendBroadcast } from "@/utils/responses";
 
-// New endpoint to get presigned upload URL
 export const handleGetPresignedURL = async (req: Request) => {
   try {
     if (req.method !== "POST") {
       return errorResponse("Method not allowed", 405);
     }
 
-    // Validate R2 configuration first
-    const r2Validation = validateR2Config();
-    if (!r2Validation.isValid) {
-      console.error("R2 configuration errors:", r2Validation.errors);
-      return errorResponse("R2 configuration not complete", 500);
-    }
+    const origin = new URL(req.url).origin;
+    observePublicBaseUrl(origin);
 
     const body: unknown = await req.json();
     const parseResult = GetUploadUrlSchema.safeParse(body);
@@ -42,13 +38,15 @@ export const handleGetPresignedURL = async (req: Request) => {
 
     // Generate unique filename
     const uniqueFileName = generateAudioFileName(fileName);
-    const r2Key = createKey(roomId, uniqueFileName);
 
-    // Generate presigned URL for upload
-    const uploadUrl = await generatePresignedUploadUrl(roomId, uniqueFileName, contentType);
-    const publicUrl = getPublicAudioUrl(roomId, uniqueFileName);
+    const { uploadUrl, publicUrl } = await createUploadTarget({
+      baseUrl: origin,
+      contentType,
+      fileName: uniqueFileName,
+      roomId,
+    });
 
-    console.log(`Generated presigned URL for upload - R2 key: (${r2Key})`);
+    console.log(`Generated ${getStorageMode()} upload URL for room ${roomId}: ${uniqueFileName}`);
 
     const response: UploadUrlResponseType = {
       uploadUrl,
@@ -76,7 +74,8 @@ export const handleUploadComplete = async (req: Request, server: BunServer) => {
       return errorResponse(`Invalid request data: ${parseResult.error.message}`, 400);
     }
 
-    const { roomId, publicUrl } = parseResult.data;
+    const { roomId, originalName, publicUrl } = parseResult.data;
+    observePublicBaseUrl(new URL(req.url).origin);
 
     // Check if room exists
     const room = globalManager.getRoom(roomId);
@@ -84,7 +83,17 @@ export const handleUploadComplete = async (req: Request, server: BunServer) => {
       return errorResponse("Room not found. The room may have been closed during upload.", 404);
     }
 
-    const sources = room.addAudioSource({ url: publicUrl });
+    const fileExists = await validateAudioFileExists(publicUrl);
+    if (!fileExists) {
+      return errorResponse("Uploaded file not found in storage.", 400);
+    }
+
+    const title = originalName.replace(/\.[^/.]+$/, "").trim() || originalName;
+    const sources = room.addAudioSource({
+      url: publicUrl,
+      title,
+      sourceKind: "upload",
+    });
 
     console.log(`✅ Audio upload completed - broadcasting to room ${roomId} new sources: ${JSON.stringify(sources)}`);
 
@@ -107,4 +116,13 @@ export const handleUploadComplete = async (req: Request, server: BunServer) => {
     console.error("Error confirming upload:", error);
     return errorResponse("Failed to confirm upload", 500);
   }
+};
+
+export const handleLocalUpload = async (req: Request, pathname: string) => {
+  const token = decodeURIComponent(pathname.slice("/upload/local/".length));
+  if (!token) {
+    return errorResponse("Upload URL expired or invalid", 404);
+  }
+
+  return await handleLocalUploadRequest(req, token);
 };

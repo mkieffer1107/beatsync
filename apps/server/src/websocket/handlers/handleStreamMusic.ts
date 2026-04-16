@@ -1,5 +1,5 @@
 import { IS_DEMO_MODE } from "@/demo";
-import { generateAudioFileName, uploadBytes } from "@/lib/r2";
+import { generateAudioFileName, observePublicBaseUrl, uploadBytes } from "@/lib/r2";
 import { globalManager } from "@/managers";
 import { MUSIC_PROVIDER_MANAGER } from "@/managers/MusicProviderManager";
 import { sendBroadcast } from "@/utils/responses";
@@ -20,6 +20,8 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
     console.error(`Stream request failed: Room ${roomId} not found`);
     return;
   }
+  room.cancelCleanup();
+  observePublicBaseUrl(ws.data.serverOrigin);
 
   // Check if this track is already being streamed
   const trackId = message.trackId.toString();
@@ -56,7 +58,7 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
     console.log(`Downloading audio from: ${streamUrl}`);
     const response = await fetch(streamUrl);
 
-    // Generate a unique filename for R2
+    // Generate a unique filename for storage
     const fileName = generateAudioFileName(`${originalName}.mp3`);
 
     if (!response.ok) {
@@ -69,14 +71,19 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
     // Get content type from response headers, fallback to audio/mpeg
     const contentType = response.headers.get("content-type") ?? "audio/mpeg";
 
-    // Upload directly to R2
-    console.log(`Uploading to R2: room-${roomId}/${fileName}`);
+    // Upload directly to active storage
+    console.log(`Uploading imported track: room-${roomId}/${fileName}`);
     const r2Url = await uploadBytes(arrayBuffer, roomId, fileName, contentType);
 
     // Add the audio source to the room and get updated sources list
-    const sources = room.addAudioSource({ url: r2Url });
+    const sources = room.addAudioSource({
+      url: r2Url,
+      title: originalName,
+      originalUrl: streamUrl,
+      sourceKind: "provider",
+    });
 
-    console.log(`Successfully uploaded track to R2: ${r2Url}`);
+    console.log(`Successfully uploaded track: ${r2Url}`);
     console.log(`Broadcasting new audio sources to room ${roomId}: ${sources.length} total sources`);
 
     // Broadcast to all room members that new audio is available
@@ -104,5 +111,9 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
         activeJobCount: room.getActiveStreamJobCount(),
       },
     });
+
+    if (room.getActiveStreamJobCount() === 0 && !room.hasActiveConnections()) {
+      globalManager.scheduleRoomCleanup(roomId);
+    }
   }
 };

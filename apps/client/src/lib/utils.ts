@@ -1,4 +1,4 @@
-import type { ClientDataType } from "@beatsync/shared";
+import type { AudioSourceType, ClientDataType } from "@beatsync/shared";
 import { R2_AUDIO_FILE_NAME_DELIMITER } from "@beatsync/shared";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -57,4 +57,8 @@ export const extractFileNameFromUrl = (url: string) => {
   }
 
   throw new Error(`Invalid URL: ${url}`);
+};
+
+export const getAudioSourceDisplayName = (source: Pick<AudioSourceType, "url" | "title">) => {
+  return source.title?.trim() || extractFileNameFromUrl(source.url);
 };

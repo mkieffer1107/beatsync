@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { motion } from "motion/react";
 import { Queue } from "../Queue";
+import { PlaylistLibrary } from "../library/PlaylistLibrary";
 import { InlineSearch } from "./InlineSearch";
 
 export const Main = () => {
@@ -15,6 +16,11 @@ export const Main = () => {
         {/* <h1 className="text-xl font-semibold mb-8">BeatSync</h1> */}
         <div className="mb-6">
           <InlineSearch />
+        </div>
+        <PlaylistLibrary className="mb-8" />
+        <div className="mb-3">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-neutral-500">Now Playing Order</div>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-white">Live Queue</h2>
         </div>
         <Queue className="mb-8" />
       </motion.div>

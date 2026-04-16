@@ -5,13 +5,15 @@
 import type { WSBroadcastType } from "@beatsync/shared";
 import type { PlayActionType } from "@beatsync/shared/types/WSRequest";
 import type { ServerWebSocket } from "bun";
-import { afterEach, beforeEach, describe, expect, it, mock, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import sinon from "sinon";
 import { mockR2 } from "@/__tests__/mocks/r2";
 import { createMockServer, createMockWs } from "@/__tests__/mocks/websocket";
 import { RoomManager } from "@/managers/RoomManager";
 import type { BunServer, WSData } from "@/utils/websocket";
 
 let broadcastMessages: { server: BunServer; roomId: string; message: WSBroadcastType }[] = [];
+let clock: sinon.SinonFakeTimers | null = null;
 
 mockR2();
 
@@ -247,11 +249,12 @@ describe("Audio Loading Coordination", () => {
 
   describe("timeout behavior", () => {
     beforeEach(() => {
-      vi.useFakeTimers();
+      clock = sinon.useFakeTimers();
     });
 
     afterEach(() => {
-      vi.useRealTimers();
+      clock?.restore();
+      clock = null;
     });
 
     it("should execute play after timeout even if not all clients loaded", () => {
@@ -266,7 +269,7 @@ describe("Audio Loading Coordination", () => {
       expect(getScheduledActionBroadcasts()).toHaveLength(0);
 
       // Advance past the 3s timeout
-      vi.advanceTimersByTime(3000);
+      clock?.tick(3000);
 
       const scheduled = getScheduledActionBroadcasts();
       expect(scheduled).toHaveLength(1);
@@ -285,7 +288,7 @@ describe("Audio Loading Coordination", () => {
       expect(getScheduledActionBroadcasts()).toHaveLength(1);
 
       // Advance past the timeout window - should not fire again
-      vi.advanceTimersByTime(3000);
+      clock?.tick(3000);
 
       // Should still only have 1 scheduled action (timeout was cleared)
       expect(getScheduledActionBroadcasts()).toHaveLength(1);

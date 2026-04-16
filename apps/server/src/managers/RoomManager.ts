@@ -16,18 +16,21 @@ import type {
   PlayActionType,
   PlaybackControlsPermissionsEnum,
   PlaybackControlsPermissionsType,
+  PlaylistType,
   PositionType,
   RoomType,
   WSBroadcastType,
 } from "@beatsync/shared";
 import { ChatMessageSchema, ClientDataSchema, epochNow, LOW_PASS_CONSTANTS, NTP_CONSTANTS } from "@beatsync/shared";
-import { AudioSourceSchema, GRID } from "@beatsync/shared/types/basic";
+import { AudioSourceSchema, GRID, PlaylistSchema } from "@beatsync/shared/types/basic";
 import type { SendLocationSchema } from "@beatsync/shared/types/WSRequest";
 import type { ServerWebSocket } from "bun";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 interface RoomData {
   audioSources: AudioSourceType[];
+  playlists: PlaylistType[];
   clients: ClientDataType[];
   roomId: string;
   intervalId?: NodeJS.Timeout;
@@ -36,6 +39,19 @@ interface RoomData {
   globalVolume: number; // Master volume multiplier (0-1)
   lowPassFreq: number; // Low-pass filter cutoff frequency (20-20000 Hz)
 }
+
+type AudioSourceInput = Omit<AudioSourceType, "sourceKind"> & {
+  sourceKind?: AudioSourceType["sourceKind"];
+};
+
+type PlaylistInput = Omit<PlaylistType, "id" | "createdAt" | "updatedAt" | "sourceKind" | "trackUrls" | "tracks"> & {
+  id?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  sourceKind?: PlaylistType["sourceKind"];
+  trackUrls?: string[];
+  tracks?: AudioSourceInput[];
+};
 
 export const ClientCacheBackupSchema = z.record(z.string(), z.object({ isAdmin: z.boolean() }));
 
@@ -50,6 +66,7 @@ type RoomPlaybackState = z.infer<typeof RoomPlaybackStateSchema>;
 const RoomBackupSchema = z.object({
   clientDatas: z.array(ClientDataSchema),
   audioSources: z.array(AudioSourceSchema),
+  playlists: z.array(PlaylistSchema).default([]),
   globalVolume: z.number().min(0).max(1).default(1.0),
   lowPassFreq: z
     .number()
@@ -100,6 +117,7 @@ export class RoomManager {
   private clientData = new Map<string, ClientDataType>(); // map of clientId -> client data
   private wsConnections = new Map<string, ServerWebSocket<WSData>>(); // map of clientId -> ws
   private audioSources: AudioSourceType[] = [];
+  private playlists: PlaylistType[] = [];
   private listeningSource: PositionType = {
     x: GRID.ORIGIN_X,
     y: GRID.ORIGIN_Y,
@@ -298,6 +316,255 @@ export class RoomManager {
     return this.audioSources;
   }
 
+  getPlaylists(): PlaylistType[] {
+    this.refreshStoredPlaylistTracks();
+    return this.playlists.map((playlist) => this.clonePlaylist(playlist));
+  }
+
+  getPlaylist(playlistId: string): PlaylistType | undefined {
+    return this.playlists.find((playlist) => playlist.id === playlistId);
+  }
+
+  findPlaylistBySource(params: {
+    sourceKind: PlaylistType["sourceKind"];
+    externalId?: string;
+    originalUrl?: string;
+  }): PlaylistType | undefined {
+    return this.playlists.find((playlist) => {
+      if (playlist.sourceKind !== params.sourceKind) {
+        return false;
+      }
+
+      if (params.externalId && playlist.externalId === params.externalId) {
+        return true;
+      }
+
+      if (params.originalUrl && playlist.originalUrl === params.originalUrl) {
+        return true;
+      }
+
+      return false;
+    });
+  }
+
+  private normalizeAudioSource(source: AudioSourceInput): AudioSourceType {
+    return {
+      sourceKind: "upload",
+      ...source,
+      collection: source.collection ? { ...source.collection } : undefined,
+    };
+  }
+
+  private dedupeTrackUrls(trackUrls: string[]): string[] {
+    const seen = new Set<string>();
+
+    return trackUrls.filter((url) => {
+      if (seen.has(url)) {
+        return false;
+      }
+
+      seen.add(url);
+      return true;
+    });
+  }
+
+  private normalizePlaylistTracks(tracks: AudioSourceInput[]): AudioSourceType[] {
+    const seen = new Set<string>();
+    const normalized: AudioSourceType[] = [];
+
+    for (const track of tracks) {
+      if (!track.url || seen.has(track.url)) {
+        continue;
+      }
+
+      seen.add(track.url);
+      normalized.push(this.normalizeAudioSource(track));
+    }
+
+    return normalized;
+  }
+
+  private hydratePlaylistTracks(trackUrls: string[], tracks: AudioSourceInput[]): AudioSourceType[] {
+    const directTracks = this.normalizePlaylistTracks(tracks);
+    const directTracksByUrl = new Map(directTracks.map((track) => [track.url, track]));
+    const queueTracksByUrl = new Map(this.audioSources.map((track) => [track.url, track]));
+    const normalizedTrackUrls = this.dedupeTrackUrls([...trackUrls, ...directTracks.map((track) => track.url)]);
+    const hydrated: AudioSourceType[] = [];
+    const seen = new Set<string>();
+
+    for (const url of normalizedTrackUrls) {
+      const resolvedTrack = directTracksByUrl.get(url) ?? queueTracksByUrl.get(url);
+      if (!resolvedTrack || seen.has(url)) {
+        continue;
+      }
+
+      seen.add(url);
+      hydrated.push(this.normalizeAudioSource(resolvedTrack));
+    }
+
+    return hydrated;
+  }
+
+  private clonePlaylist(playlist: PlaylistType): PlaylistType {
+    return {
+      ...playlist,
+      trackUrls: [...playlist.trackUrls],
+      tracks: playlist.tracks.map((track) => this.normalizeAudioSource(track)),
+    };
+  }
+
+  private refreshStoredPlaylistTracks(): void {
+    this.playlists = this.playlists.map((playlist) => {
+      const hydratedTracks = this.hydratePlaylistTracks(playlist.trackUrls, playlist.tracks);
+
+      return {
+        ...playlist,
+        trackUrls: this.dedupeTrackUrls([...playlist.trackUrls, ...hydratedTracks.map((track) => track.url)]),
+        tracks: hydratedTracks,
+      };
+    });
+  }
+
+  private sanitizePlaylistInput(input: PlaylistInput): PlaylistType {
+    const now = Date.now();
+    const hydratedTracks = this.hydratePlaylistTracks(input.trackUrls ?? [], input.tracks ?? []);
+    const hydratedTrackUrls = this.dedupeTrackUrls([
+      ...(input.trackUrls ?? []),
+      ...hydratedTracks.map((track) => track.url),
+    ]);
+
+    return {
+      id: input.id ?? randomUUID(),
+      name: input.name.trim(),
+      trackUrls: hydratedTrackUrls,
+      tracks: hydratedTracks,
+      artworkUrl: input.artworkUrl,
+      sourceKind: input.sourceKind ?? "manual",
+      externalId: input.externalId,
+      originalUrl: input.originalUrl,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+    };
+  }
+
+  createPlaylist(input: PlaylistInput): PlaylistType {
+    const playlist = this.sanitizePlaylistInput(input);
+    this.playlists.push(playlist);
+    return playlist;
+  }
+
+  updatePlaylist(
+    playlistId: string,
+    updates: {
+      name?: string;
+      artworkUrl?: string | null;
+      externalId?: string;
+      originalUrl?: string;
+      sourceKind?: PlaylistType["sourceKind"];
+    }
+  ): PlaylistType | undefined {
+    const playlist = this.getPlaylist(playlistId);
+    if (!playlist) {
+      return undefined;
+    }
+
+    if (updates.name !== undefined) {
+      playlist.name = updates.name.trim();
+    }
+
+    if (updates.artworkUrl !== undefined) {
+      playlist.artworkUrl = updates.artworkUrl ?? undefined;
+    }
+
+    if (updates.externalId !== undefined) {
+      playlist.externalId = updates.externalId;
+    }
+
+    if (updates.originalUrl !== undefined) {
+      playlist.originalUrl = updates.originalUrl;
+    }
+
+    if (updates.sourceKind !== undefined) {
+      playlist.sourceKind = updates.sourceKind;
+    }
+
+    playlist.updatedAt = Date.now();
+    return playlist;
+  }
+
+  setPlaylists(playlists: PlaylistInput[]): PlaylistType[] {
+    this.playlists = playlists.map((playlist) => this.sanitizePlaylistInput(playlist));
+    return this.playlists;
+  }
+
+  deletePlaylist(playlistId: string): PlaylistType[] {
+    this.playlists = this.playlists.filter((playlist) => playlist.id !== playlistId);
+    return this.playlists;
+  }
+
+  setPlaylistTracks(playlistId: string, trackUrls: string[]): PlaylistType | undefined {
+    const playlist = this.getPlaylist(playlistId);
+    if (!playlist) {
+      return undefined;
+    }
+
+    playlist.tracks = this.hydratePlaylistTracks(trackUrls, playlist.tracks);
+    playlist.trackUrls = this.dedupeTrackUrls([...trackUrls, ...playlist.tracks.map((track) => track.url)]);
+    playlist.updatedAt = Date.now();
+    return playlist;
+  }
+
+  hasPlaylistTrack(url: string): boolean {
+    return this.playlists.some((playlist) => playlist.trackUrls.includes(url));
+  }
+
+  findTrackByOriginalUrl(originalUrl: string): AudioSourceType | undefined {
+    const queueTrack = this.audioSources.find((source) => source.originalUrl === originalUrl);
+    if (queueTrack) {
+      return queueTrack;
+    }
+
+    for (const playlist of this.playlists) {
+      const playlistTrack = playlist.tracks.find((track) => track.originalUrl === originalUrl);
+      if (playlistTrack) {
+        return playlistTrack;
+      }
+    }
+
+    return undefined;
+  }
+
+  queuePlaylist(playlistId: string): { addedCount: number; playlist: PlaylistType; sources: AudioSourceType[] } | null {
+    const playlist = this.getPlaylist(playlistId);
+    if (!playlist) {
+      return null;
+    }
+
+    const playlistTracks = this.hydratePlaylistTracks(playlist.trackUrls, playlist.tracks);
+    const queueUrls = new Set(this.audioSources.map((source) => source.url));
+    let addedCount = 0;
+
+    for (const track of playlistTracks) {
+      if (queueUrls.has(track.url)) {
+        continue;
+      }
+
+      this.audioSources.push(this.normalizeAudioSource(track));
+      queueUrls.add(track.url);
+      addedCount += 1;
+    }
+
+    playlist.tracks = playlistTracks;
+    playlist.trackUrls = this.dedupeTrackUrls([...playlist.trackUrls, ...playlistTracks.map((track) => track.url)]);
+    playlist.updatedAt = Date.now();
+
+    return {
+      addedCount,
+      playlist: this.clonePlaylist(playlist),
+      sources: this.audioSources,
+    };
+  }
+
   getPlaybackControlsPermissions(): PlaybackControlsPermissionsType {
     return this.playbackControlsPermissions;
   }
@@ -433,19 +700,22 @@ export class RoomManager {
   /**
    * Add an audio source to the room
    */
-  addAudioSource(source: AudioSourceType): AudioSourceType[] {
-    this.audioSources.push(source);
+  addAudioSource(source: AudioSourceInput): AudioSourceType[] {
+    this.audioSources.push(this.normalizeAudioSource(source));
     return this.audioSources;
   }
 
   // Set all audio sources (used in backup restoration)
-  setAudioSources(sources: AudioSourceType[]): AudioSourceType[] {
-    this.audioSources = sources;
+  setAudioSources(sources: AudioSourceInput[]): AudioSourceType[] {
+    this.audioSources = sources.map((source) => this.normalizeAudioSource(source));
+    this.refreshStoredPlaylistTracks();
     return this.audioSources;
   }
 
   removeAudioSources(urls: string[]): {
     updated: AudioSourceType[];
+    playlists: PlaylistType[];
+    playlistsChanged: boolean;
     removedCurrent: boolean;
     removedUrl?: string;
   } {
@@ -471,6 +741,8 @@ export class RoomManager {
     }
     return {
       updated: this.audioSources,
+      playlists: this.getPlaylists(),
+      playlistsChanged: false,
       removedCurrent: removingCurrent,
       removedUrl,
     };
@@ -509,6 +781,7 @@ export class RoomManager {
   getState(): RoomData {
     return {
       audioSources: this.audioSources,
+      playlists: this.getPlaylists(),
       clients: this.getClients(),
       roomId: this.roomId,
       intervalId: this.intervalId,
@@ -527,6 +800,7 @@ export class RoomManager {
       roomId: this.roomId,
       clientCount: this.getClients().length,
       audioSourceCount: this.audioSources.length,
+      playlistCount: this.playlists.length,
       hasSpatialAudio: !!this.intervalId,
     };
   }
@@ -977,6 +1251,7 @@ export class RoomManager {
     return {
       clientDatas: Array.from(this.clientData.values()),
       audioSources: this.audioSources,
+      playlists: this.getPlaylists(),
       globalVolume: this.globalVolume,
       lowPassFreq: this.lowPassFreq,
       playbackState: this.playbackState,
@@ -1031,7 +1306,7 @@ export class RoomManager {
   }
 
   /**
-   * Clean up room resources (e.g., R2 storage)
+   * Clean up room resources in the active storage backend
    */
   async cleanup(): Promise<void> {
     console.log(`🧹 Starting room cleanup for room ${this.roomId}...`);
@@ -1042,8 +1317,8 @@ export class RoomManager {
 
     if (!IS_DEMO_MODE) {
       try {
-        const result = await deleteObjectsWithPrefix(`room-${this.roomId}`);
-        console.log(`✅ Room ${this.roomId} objects deleted: ${result.deletedCount}`);
+        const result = await deleteObjectsWithPrefix(`room-${this.roomId}/`);
+        console.log(`✅ Room ${this.roomId} storage objects deleted: ${result.deletedCount}`);
       } catch (error) {
         console.error(`❌ Room ${this.roomId} cleanup failed:`, error);
       }
@@ -1171,6 +1446,7 @@ export class RoomManager {
       roomId: this.roomId,
       clients: this.getClients(),
       audioSources: this.audioSources,
+      playlists: this.getPlaylists(),
       playbackState: this.playbackState,
     };
   }
@@ -1183,6 +1459,10 @@ export class RoomManager {
 
   restorePlaybackState(playbackState: RoomPlaybackState): void {
     this.playbackState = playbackState;
+  }
+
+  restorePlaylists(playlists: PlaylistInput[]): void {
+    this.setPlaylists(playlists);
   }
 
   /**

@@ -1,4 +1,5 @@
 import { ADMIN_SECRET, IS_DEMO_MODE } from "@/demo";
+import { getStorageMode, observePublicBaseUrl } from "@/lib/r2";
 import { BackupManager } from "@/managers/BackupManager";
 import { getActiveRooms } from "@/routes/active";
 import { handleGetDefaultAudio } from "@/routes/default";
@@ -6,7 +7,7 @@ import { handleServeAudio } from "@/routes/demoAudio";
 import { handleDiscover } from "@/routes/discover";
 import { handleRoot } from "@/routes/root";
 import { handleStats } from "@/routes/stats";
-import { handleGetPresignedURL, handleUploadComplete } from "@/routes/upload";
+import { handleGetPresignedURL, handleLocalUpload, handleUploadComplete } from "@/routes/upload";
 import { handleWebSocketUpgrade } from "@/routes/websocket";
 import { handleClose, handleMessage, handleOpen } from "@/routes/websocketHandlers";
 import { corsHeaders, errorResponse } from "@/utils/responses";
@@ -18,6 +19,7 @@ const server = Bun.serve<WSData>({
   port: 8080,
   async fetch(req, server) {
     const url = new URL(req.url);
+    observePublicBaseUrl(url.origin);
 
     // Handle CORS preflight requests
     if (req.method === "OPTIONS") {
@@ -25,9 +27,16 @@ const server = Bun.serve<WSData>({
     }
 
     try {
-      // Demo mode: serve local audio files
-      if (IS_DEMO_MODE && url.pathname.startsWith("/audio/")) {
-        return handleServeAudio(url.pathname);
+      if (url.pathname.startsWith("/audio/")) {
+        if (!IS_DEMO_MODE && getStorageMode() !== "local") {
+          return errorResponse("Not found", 404);
+        }
+        return await handleServeAudio(url.pathname);
+      }
+
+      if (url.pathname.startsWith("/upload/local/")) {
+        if (IS_DEMO_MODE) return errorResponse("Uploads disabled in demo mode", 403);
+        return await handleLocalUpload(req, url.pathname);
       }
 
       switch (url.pathname) {
@@ -81,6 +90,7 @@ const server = Bun.serve<WSData>({
 });
 
 console.log(`HTTP listening on http://${server.hostname}:${server.port}`);
+console.log(`Storage mode: ${getStorageMode()}`);
 
 if (IS_DEMO_MODE) {
   console.log(`🔑 Admin secret: ${ADMIN_SECRET}`);

@@ -6,6 +6,7 @@ export interface WSData {
   username: string;
   isAdmin: boolean;
   isCreator: boolean;
+  serverOrigin: string;
 }
 
 export type BunServer = Server<WSData>;

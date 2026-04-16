@@ -1,4 +1,9 @@
-import { cn, extractFileNameFromUrl, formatTime } from "@/lib/utils";
+import {
+  getAudioSourceArtworkUrl,
+  getAudioSourceCollectionLabel,
+  getAudioSourceDisplayTitle,
+} from "@/lib/audioSourceDisplay";
+import { cn, formatTime } from "@/lib/utils";
 import { AudioSourceState, useGlobalStore } from "@/store/global";
 import { sendWSRequest } from "@/utils/ws";
 import { ClientActionEnum } from "@beatsync/shared";
@@ -14,6 +19,23 @@ import {
   Play,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { useState } from "react";
+
+const QueueArtwork = ({ src, alt }: { src: string; alt: string }) => {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const hasError = failedSrc === src;
+
+  if (hasError) {
+    return null;
+  }
+
+  return (
+    <div className="size-9 sm:size-10 rounded-md overflow-hidden border border-neutral-700/50 bg-neutral-800/60 flex-shrink-0">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} className="w-full h-full object-cover" onError={() => setFailedSrc(src)} />
+    </div>
+  );
+};
 
 export const QueueSortableItem = ({
   id,
@@ -43,6 +65,10 @@ export const QueueSortableItem = ({
   const isPlayingThis = isSelected && isPlaying;
   const isLoading = sourceState.status === "loading";
   const isError = sourceState.status === "error";
+  const displayTitle = getAudioSourceDisplayTitle(sourceState.source);
+  const artworkUrl = getAudioSourceArtworkUrl(sourceState.source);
+  const collectionLabel = getAudioSourceCollectionLabel(sourceState.source);
+  const secondaryLabel = collectionLabel && collectionLabel !== displayTitle ? collectionLabel : null;
 
   const handleItemClick = (sourceState: AudioSourceState) => {
     if (!canMutate) return;
@@ -228,17 +254,27 @@ export const QueueSortableItem = ({
         </div>
 
         {/* Track name */}
-        <div className="flex-grow min-w-0 ml-3 select-none">
-          <div
-            className={cn(
-              "font-medium text-sm truncate select-none",
-              isSelected && !isLoading ? "text-primary-400" : "",
-              isError && "text-red-400",
-              isLoading && "opacity-60"
-            )}
-          >
-            {extractFileNameFromUrl(sourceState.source.url)}
-            {isError && sourceState.error && <span className="text-xs text-red-400 ml-2">({sourceState.error})</span>}
+        <div className="flex-grow min-w-0 ml-3 flex items-center gap-3 select-none">
+          {artworkUrl ? <QueueArtwork src={artworkUrl} alt={displayTitle} /> : null}
+
+          <div className="min-w-0 flex-1">
+            <div
+              className={cn(
+                "font-medium text-sm truncate select-none",
+                isSelected && !isLoading ? "text-primary-400" : "",
+                isError && "text-red-400",
+                isLoading && "opacity-60"
+              )}
+            >
+              {displayTitle}
+              {isError && sourceState.error && <span className="text-xs text-red-400 ml-2">({sourceState.error})</span>}
+            </div>
+
+            {secondaryLabel ? (
+              <div className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-neutral-500 truncate select-none">
+                {secondaryLabel}
+              </div>
+            ) : null}
           </div>
         </div>
 

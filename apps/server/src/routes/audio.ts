@@ -1,10 +1,13 @@
 import { GetAudioSchema } from "@beatsync/shared";
 import { errorResponse } from "@/utils/responses";
 import type { BunServer } from "@/utils/websocket";
-import { getPublicAudioUrl } from "@/lib/r2";
+import { getPublicAudioUrl, observePublicBaseUrl } from "@/lib/r2";
 
 export const handleGetAudio = async (req: Request, _server: BunServer) => {
   try {
+    const origin = new URL(req.url).origin;
+    observePublicBaseUrl(origin);
+
     // Check if it's a POST request
     if (req.method !== "POST") {
       return errorResponse("Method not allowed", 405);
@@ -37,7 +40,7 @@ export const handleGetAudio = async (req: Request, _server: BunServer) => {
     const fileName = parts[1];
 
     // Generate R2 public URL and redirect
-    const publicUrl = getPublicAudioUrl(roomId, fileName);
+    const publicUrl = getPublicAudioUrl(roomId, fileName, origin);
 
     // Return a redirect to the R2 public URL
     return new Response(null, {

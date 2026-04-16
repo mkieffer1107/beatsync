@@ -17,6 +17,7 @@ interface RoomRestoreResult {
     id: string;
     numClients: number;
     numAudioSources: number;
+    numPlaylists: number;
     globalVolume: number;
   };
   success: boolean;
@@ -34,7 +35,7 @@ export class BackupManager {
     try {
       const room = globalManager.getOrCreateRoom(roomId);
 
-      // Concurrently validate all audio sources in R2 (no limit on concurrency)
+      // Concurrently validate all audio sources in active storage
       const validationPromises = roomData.audioSources.map((source) => validateAudioFileExists(source.url));
       const validationResults = await Promise.all(validationPromises);
 
@@ -43,6 +44,9 @@ export class BackupManager {
 
       // Restore audio sources
       room.setAudioSources(validAudioSources);
+
+      // Restore playlists after audio sources so stale track references can be pruned.
+      room.restorePlaylists(roomData.playlists ?? []);
 
       // Restore client data
       room.restoreClientData(roomData.clientDatas);
@@ -74,6 +78,7 @@ export class BackupManager {
           id: roomId,
           numClients: roomData.clientDatas.length,
           numAudioSources: validAudioSources.length,
+          numPlaylists: room.getPlaylists().length,
           globalVolume: roomData.globalVolume,
         },
         success: true,
@@ -86,6 +91,7 @@ export class BackupManager {
           globalVolume: roomData.globalVolume,
           numClients: roomData.clientDatas.length,
           numAudioSources: roomData.audioSources.length,
+          numPlaylists: roomData.playlists?.length ?? 0,
         },
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -109,7 +115,7 @@ export class BackupManager {
   }
 
   /**
-   * Save the current server state to R2
+   * Save the current server state to active storage
    */
   static async backupState(): Promise<void> {
     try {
@@ -127,7 +133,7 @@ export class BackupManager {
 
       const filename = this.generateBackupFilename();
 
-      // Upload to R2 using the utility function
+      // Upload using the active storage backend
       await uploadJSON(filename, backupData);
 
       console.log(`✅ State backup completed: ${filename} (${rooms ? Object.keys(rooms).length : 0} rooms)`);
@@ -141,7 +147,7 @@ export class BackupManager {
   }
 
   /**
-   * Restore server state from the latest backup in R2
+   * Restore server state from the latest backup in active storage
    */
   static async restoreState(): Promise<boolean> {
     try {
@@ -197,7 +203,7 @@ export class BackupManager {
         if (result.status !== "fulfilled") {
           const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
           failed.push({
-            room: { id: "unknown", numClients: 0, numAudioSources: 0, globalVolume: 0 },
+            room: { id: "unknown", numClients: 0, numAudioSources: 0, numPlaylists: 0, globalVolume: 0 },
             success: false,
             error: reason,
           });
@@ -218,7 +224,7 @@ export class BackupManager {
       if (successful.length > 0) {
         successful.forEach((result) => {
           console.log(
-            `     Room ${result.room.id}: ${result.room.numClients} clients, ${result.room.numAudioSources} audio sources`
+            `     Room ${result.room.id}: ${result.room.numClients} clients, ${result.room.numAudioSources} audio sources, ${result.room.numPlaylists} playlists`
           );
         });
       }

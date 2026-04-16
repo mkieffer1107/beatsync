@@ -20,9 +20,20 @@ export const MusicSearchResponseSchema = z.object({
 });
 export type MusicSearchResponseType = z.infer<typeof MusicSearchResponseSchema>;
 
+export const ImportStatusSchema = z.object({
+  type: z.literal("IMPORT_STATUS"),
+  status: z.enum(["started", "completed", "error"]),
+  message: z.string(),
+  importedCount: z.number().nonnegative().optional(),
+  failedCount: z.number().nonnegative().optional(),
+  collectionName: z.string().optional(),
+});
+export type ImportStatusType = z.infer<typeof ImportStatusSchema>;
+
 export const WSUnicastSchema = z.discriminatedUnion("type", [
   NTPResponseMessageSchema,
   ScheduledActionSchema,
   MusicSearchResponseSchema,
+  ImportStatusSchema,
 ]);
 export type WSUnicastType = z.infer<typeof WSUnicastSchema>;

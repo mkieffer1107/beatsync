@@ -14,7 +14,7 @@ export async function handleCleanup(req: Request) {
     const mode = url.searchParams.get("mode");
     const isLive = mode === "live";
 
-    console.log(`🧹 Starting R2 Orphaned Room Cleanup via API`);
+    console.log(`🧹 Starting storage orphaned room cleanup via API`);
     console.log(`Mode: ${isLive ? "LIVE (will delete files)" : "DRY RUN (no deletions)"}\n`);
 
     // Get active rooms from server

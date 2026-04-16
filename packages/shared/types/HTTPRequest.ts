@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AudioSourceSchema } from "./basic";
+import { AudioSourceSchema, PlaylistSchema } from "./basic";
 import { ClientDataSchema } from "./WSBroadcast";
 
 // Legacy upload schema (deprecated)
@@ -60,6 +60,7 @@ export const RoomSchema = z.object({
   roomId: z.string(),
   clientCount: z.number(),
   audioSourceCount: z.number(),
+  playlistCount: z.number().default(0),
   hasSpatialAudio: z.boolean(),
 });
 export type RoomType = z.infer<typeof RoomSchema>;
@@ -71,6 +72,7 @@ export const DiscoveryRoomSchema = z.object({
   roomId: z.string(),
   clients: z.array(ClientDataSchema),
   audioSources: z.array(AudioSourceSchema),
+  playlists: z.array(PlaylistSchema).default([]),
   playbackState: z.object({
     type: z.enum(["playing", "paused"]),
     audioSource: z.string(), // URL of the audio source
