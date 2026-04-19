@@ -35,6 +35,9 @@ For a Pi-style single-hostname stack, use `bun run lan:dev` for development or
 Caddy together.
 If you want one command that installs deps, builds everything, validates Caddy,
 and starts the production stack, use `bun run lan:prod`.
+That production launcher reads [`apps/server/.env.production`](./apps/server/.env.production)
+and [`apps/client/.env.production`](./apps/client/.env.production), so your
+existing `.env` files can stay focused on local development.
 
 Run the following commands to start the server and client:
 

@@ -178,6 +178,13 @@ Use `bun run lan:prod` when you want the simplest Pi command. It runs `bun insta
 builds the workspace, validates the checked-in `Caddyfile`, and then starts the
 client, server, and Caddy together.
 
+`bun run lan:prod` reads these production env files:
+
+- `apps/server/.env.production`
+- `apps/client/.env.production`
+
+That lets you keep your existing `.env` files for development.
+
 For a first Pi deployment, Option A is still simpler, but Option B is the cleanest branded setup once local DNS is working.
 
 ## 7. Start it in development mode
@@ -595,6 +602,19 @@ That starts:
 - Bun server on `127.0.0.1:8080`
 - Next.js client on `127.0.0.1:3000`
 - Caddy on `vibe.mathnasium.pro`
+
+The default production server env in this repo uses:
+
+```env
+LOCAL_STORAGE_ROOT=./storage
+PUBLIC_BASE_URL=http://vibe.mathnasium.pro
+SERVER_HOST=127.0.0.1
+SERVER_PORT=8080
+YTDLP_COOKIES_FROM_BROWSER=chrome
+```
+
+Because `LOCAL_STORAGE_ROOT` is relative and the server runs from `apps/server`,
+uploaded files and backups stay inside the repo at `apps/server/storage`.
 
 If you want these to come up at boot, sample systemd units are checked in under [`systemd/`](./systemd).
 
