@@ -73,6 +73,15 @@ start_bun_process() {
   PIDS+=("$!")
 }
 
+ensure_caddy() {
+  if caddy reload --config "$ROOT_DIR/Caddyfile" >/dev/null 2>&1; then
+    echo "[caddy] reloaded existing process"
+    return
+  fi
+
+  start_process caddy caddy run --config "$ROOT_DIR/Caddyfile"
+}
+
 require_cmd bun
 require_cmd caddy
 
@@ -91,7 +100,7 @@ case "$MODE" in
     ;;
 esac
 
-start_process caddy caddy run --config "$ROOT_DIR/Caddyfile"
+ensure_caddy
 
 trap cleanup EXIT INT TERM
 wait_for_any_exit
