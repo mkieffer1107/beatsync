@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, extname, join } from "node:path";
 import { spawn } from "node:child_process";
 
 interface YoutubeThumbnail {
@@ -43,6 +44,18 @@ export interface DownloadedYoutubeTrack {
   filePath: string;
 }
 
+interface ResolvedYtDlpBinary {
+  command: string;
+  version: string | null;
+}
+
+interface YtDlpAttempt {
+  label: string;
+  args: string[];
+}
+
+let resolvedYtDlpBinaryPromise: Promise<ResolvedYtDlpBinary> | null = null;
+
 function isYoutubeUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -63,12 +76,12 @@ function runCommand(command: string, args: string[], options?: { cwd?: string })
     let stdout = "";
     let stderr = "";
 
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout += String(chunk);
     });
 
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += String(chunk);
     });
 
     child.on("error", (error) => {
@@ -87,6 +100,244 @@ function runCommand(command: string, args: string[], options?: { cwd?: string })
   });
 }
 
+function parseYtDlpVersion(version: string): number[] | null {
+  const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})/.exec(version.trim());
+  if (!match) {
+    return null;
+  }
+
+  return match.slice(1).map((segment) => Number.parseInt(segment, 10));
+}
+
+function compareParsedVersions(left: number[] | null, right: number[] | null): number {
+  if (!left && !right) return 0;
+  if (!left) return -1;
+  if (!right) return 1;
+
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const leftPart = left[index] ?? 0;
+    const rightPart = right[index] ?? 0;
+
+    if (leftPart !== rightPart) {
+      return leftPart > rightPart ? 1 : -1;
+    }
+  }
+
+  return 0;
+}
+
+function getYtDlpCandidates(): string[] {
+  const explicitBinary = process.env.YTDLP_BINARY?.trim();
+  if (explicitBinary) {
+    return [explicitBinary];
+  }
+
+  const candidates = new Set<string>();
+  const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+
+  for (const entry of pathEntries) {
+    candidates.add(join(entry, "yt-dlp"));
+  }
+
+  const home = homedir();
+  candidates.add(join(home, ".vibe", "yt-dlp-master-env", "bin", "yt-dlp"));
+  candidates.add(join(home, ".vibe", "yt-dlp-env", "bin", "yt-dlp"));
+  candidates.add(join(home, ".local", "bin", "yt-dlp"));
+  candidates.add(join(home, "miniforge3", "bin", "yt-dlp"));
+  candidates.add("/opt/homebrew/bin/yt-dlp");
+  candidates.add("/usr/local/bin/yt-dlp");
+
+  return [...candidates];
+}
+
+async function resolveYtDlpBinary(): Promise<ResolvedYtDlpBinary> {
+  if (resolvedYtDlpBinaryPromise) {
+    return resolvedYtDlpBinaryPromise;
+  }
+
+  resolvedYtDlpBinaryPromise = (async () => {
+    const candidates = getYtDlpCandidates();
+    const resolvedCandidates: ResolvedYtDlpBinary[] = [];
+
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) {
+        continue;
+      }
+
+      try {
+        const version = await runCommand(candidate, ["--version"]);
+        resolvedCandidates.push({
+          command: candidate,
+          version: version.trim() || null,
+        });
+      } catch {
+        // Ignore non-working candidates and continue scanning.
+      }
+    }
+
+    if (resolvedCandidates.length === 0) {
+      return {
+        command: "yt-dlp",
+        version: null,
+      };
+    }
+
+    resolvedCandidates.sort((left, right) => {
+      const versionComparison = compareParsedVersions(parseYtDlpVersion(left.version ?? ""), parseYtDlpVersion(right.version ?? ""));
+      if (versionComparison !== 0) {
+        return -versionComparison;
+      }
+
+      return left.command.localeCompare(right.command);
+    });
+
+    return resolvedCandidates[0];
+  })();
+
+  return resolvedYtDlpBinaryPromise;
+}
+
+function getYoutubeCookieArgs(): string[] {
+  const cookieFile = process.env.YTDLP_COOKIES_FILE?.trim();
+  if (cookieFile) {
+    return ["--cookies", cookieFile];
+  }
+
+  const browser = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
+  if (browser) {
+    return ["--cookies-from-browser", browser];
+  }
+
+  return [];
+}
+
+function getYoutubeExtraArgs(): string[] {
+  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim();
+  if (!extractorArgs) {
+    return [];
+  }
+
+  return ["--extractor-args", extractorArgs];
+}
+
+function getYoutubeDownloadAttempts(track: YoutubeImportTrack): YtDlpAttempt[] {
+  const cookiesArgs = getYoutubeCookieArgs();
+  const extraArgs = getYoutubeExtraArgs();
+  const preferredFormat = process.env.YTDLP_FORMAT?.trim();
+  const directAudioFormat =
+    preferredFormat ??
+    "bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/140/bestaudio[ext=webm]/251/250/249/18/best[ext=mp4]/best";
+
+  const attempts: YtDlpAttempt[] = [
+    {
+      label: "direct audio or progressive format",
+      args: [
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        ...cookiesArgs,
+        ...extraArgs,
+        "-f",
+        directAudioFormat,
+        "--fixup",
+        "never",
+      ],
+    },
+    {
+      label: "best progressive mp4 fallback",
+      args: [
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        ...cookiesArgs,
+        ...extraArgs,
+        "-f",
+        "18/best[ext=mp4]/best",
+        "--fixup",
+        "never",
+      ],
+    },
+    {
+      label: "tv client fallback",
+      args: [
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        ...cookiesArgs,
+        "--extractor-args",
+        "youtube:player_client=tv",
+        "-f",
+        directAudioFormat,
+        "--fixup",
+        "never",
+      ],
+    },
+    {
+      label: "ios client fallback",
+      args: [
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        ...cookiesArgs,
+        "--extractor-args",
+        "youtube:player_client=ios",
+        "-f",
+        directAudioFormat,
+        "--fixup",
+        "never",
+      ],
+    },
+  ];
+
+  return attempts.map((attempt) => ({
+    label: attempt.label,
+    args: [
+      ...attempt.args,
+      "--output",
+      join("%(tmpdir)s", "%(id)s.%(ext)s").replace("%(tmpdir)s", "__TEMP_DIR__"),
+      "--print",
+      "after_move:filepath",
+      track.sourceUrl,
+    ],
+  }));
+}
+
+function formatYoutubeDownloadError(params: {
+  errors: Error[];
+  ytDlpBinary: ResolvedYtDlpBinary;
+}): Error {
+  const { errors, ytDlpBinary } = params;
+  const lastError = errors[errors.length - 1];
+  const combined = errors.map((error) => error.message).join("\n");
+  const hints: string[] = [];
+
+  if (/Requested format is not available/i.test(combined)) {
+    hints.push(
+      "The server retried multiple yt-dlp format fallbacks, but YouTube still rejected the selected media format."
+    );
+  }
+
+  if (/Sign in to confirm you(?:'|’)re not a bot|cookies-from-browser|HTTP Error 403|The page needs to be reloaded/i.test(combined)) {
+    hints.push(
+      "This video currently needs an authenticated YouTube session. Set YTDLP_COOKIES_FROM_BROWSER=chrome (or another supported browser) in apps/server/.env and restart the server."
+    );
+  }
+
+  if (ytDlpBinary.version && compareParsedVersions(parseYtDlpVersion(ytDlpBinary.version), [2026, 3, 17]) < 0) {
+    hints.push(
+      `Your yt-dlp binary looks old (${ytDlpBinary.version}). Install a newer build or set YTDLP_BINARY to a current yt-dlp executable. On macOS, a current master/nightly build is often required for YouTube imports.`
+    );
+  }
+
+  const hintText = hints.length > 0 ? ` ${hints.join(" ")}` : "";
+
+  return new Error(
+    `Unable to import YouTube media using ${ytDlpBinary.command}${ytDlpBinary.version ? ` (${ytDlpBinary.version})` : ""}.` +
+      hintText +
+      ` Last error: ${lastError?.message ?? "unknown yt-dlp failure"}`
+  );
+}
+
 function getBestThumbnailUrl(metadata: YoutubeFlatEntry): string | undefined {
   if (metadata.thumbnail) {
     return metadata.thumbnail;
@@ -101,7 +352,7 @@ function toTrack(entry: YoutubeFlatEntry): YoutubeImportTrack | null {
     return null;
   }
 
-  const title = entry.title?.trim() || `youtube-${id}`;
+  const title = entry.title?.trim() ?? `youtube-${id}`;
   const sourceUrl = entry.webpage_url ?? entry.original_url ?? `https://www.youtube.com/watch?v=${id}`;
 
   return {
@@ -117,7 +368,15 @@ export async function getYoutubeImportPlan(url: string): Promise<YoutubeImportPl
     throw new Error("Only YouTube URLs are supported");
   }
 
-  const raw = await runCommand("yt-dlp", ["--dump-single-json", "--flat-playlist", "--no-warnings", url]);
+  const ytDlpBinary = await resolveYtDlpBinary();
+  const raw = await runCommand(ytDlpBinary.command, [
+    "--dump-single-json",
+    "--flat-playlist",
+    "--no-warnings",
+    ...getYoutubeCookieArgs(),
+    ...getYoutubeExtraArgs(),
+    url,
+  ]);
 
   const metadata = JSON.parse(raw) as YoutubeMetadata;
 
@@ -128,7 +387,7 @@ export async function getYoutubeImportPlan(url: string): Promise<YoutubeImportPl
 
     return {
       kind: "playlist",
-      title: metadata.title?.trim() || "Imported Playlist",
+      title: metadata.title?.trim() ?? "Imported Playlist",
       playlistId: metadata.id ?? metadata.playlist_id,
       tracks,
     };
@@ -160,34 +419,61 @@ function getDownloadedFilePath(stdout: string): string {
   return downloadedPath;
 }
 
+async function transcodeAudioToMp3(inputPath: string, outputPath: string): Promise<void> {
+  await runCommand("ffmpeg", [
+    "-y",
+    "-loglevel",
+    "error",
+    "-i",
+    inputPath,
+    "-vn",
+    "-codec:a",
+    "libmp3lame",
+    "-q:a",
+    "2",
+    outputPath,
+  ]);
+}
+
 export async function downloadYoutubeTrack(track: YoutubeImportTrack): Promise<DownloadedYoutubeTrack> {
   const tempDir = await mkdtemp(join(tmpdir(), "beatsync-youtube-"));
+  const ytDlpBinary = await resolveYtDlpBinary();
+  const attempts = getYoutubeDownloadAttempts(track);
+  const errors: Error[] = [];
 
   try {
-    const stdout = await runCommand("yt-dlp", [
-      "--no-playlist",
-      "--no-warnings",
-      "--quiet",
-      "--extract-audio",
-      "--audio-format",
-      "mp3",
-      "--audio-quality",
-      "0",
-      "--output",
-      join(tempDir, "%(id)s.%(ext)s"),
-      "--print",
-      "after_move:filepath",
-      track.sourceUrl,
-    ]);
+    for (const attempt of attempts) {
+      try {
+        const args = attempt.args.map((argument) =>
+          argument === "__TEMP_DIR__" ? tempDir : argument.replace("__TEMP_DIR__", tempDir)
+        );
 
-    const filePath = getDownloadedFilePath(stdout);
+        const stdout = await runCommand(ytDlpBinary.command, args);
+        const downloadedPath = getDownloadedFilePath(stdout);
+        const extension = extname(downloadedPath).toLowerCase();
+        const filePath = extension === ".mp3" ? downloadedPath : join(tempDir, `${track.id}.mp3`);
 
-    return {
-      filePath,
-      cleanup: async () => {
-        await rm(tempDir, { recursive: true, force: true });
-      },
-    };
+        if (filePath !== downloadedPath) {
+          await transcodeAudioToMp3(downloadedPath, filePath);
+        }
+
+        return {
+          filePath,
+          cleanup: async () => {
+            await rm(tempDir, { recursive: true, force: true });
+          },
+        };
+      } catch (error) {
+        errors.push(
+          error instanceof Error ? new Error(`${attempt.label}: ${error.message}`) : new Error(`${attempt.label}: ${String(error)}`)
+        );
+      }
+    }
+
+    throw formatYoutubeDownloadError({
+      errors,
+      ytDlpBinary,
+    });
   } catch (error) {
     await rm(tempDir, { recursive: true, force: true });
     throw error;

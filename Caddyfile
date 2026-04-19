@@ -1,0 +1,27 @@
+# LAN-only single-origin reverse proxy for a Raspberry Pi Beatsync deployment.
+#
+# Expected local DNS:
+#   vibe.mathnasium.pro -> Raspberry Pi LAN IP
+#
+# Expected upstreams:
+#   client: 127.0.0.1:3000
+#   server: 127.0.0.1:8080
+#
+# The Next.js client derives its API and WebSocket URLs from the page URL when
+# NEXT_PUBLIC_API_URL and NEXT_PUBLIC_WS_URL are unset.
+
+http://{$BEATSYNC_DOMAIN:vibe.mathnasium.pro} {
+	encode zstd gzip
+
+	@server {
+		path /ws /upload/* /audio/* /stats /default /active-rooms /discover
+	}
+
+	handle @server {
+		reverse_proxy {$BEATSYNC_SERVER_UPSTREAM:127.0.0.1:8080}
+	}
+
+	handle {
+		reverse_proxy {$BEATSYNC_CLIENT_UPSTREAM:127.0.0.1:3000}
+	}
+}

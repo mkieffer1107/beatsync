@@ -1,11 +1,9 @@
 "use client";
-import { SOCIAL_LINKS } from "@/constants";
 import { audioContextManager } from "@/lib/audioContextManager";
 import { MAX_NTP_MEASUREMENTS, useGlobalStore } from "@/store/global";
 import { Crown, Hash, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
-import { FaDiscord, FaGithub } from "react-icons/fa";
 import { SyncProgress } from "../ui/SyncProgress";
 
 interface TopBarProps {
@@ -27,7 +25,7 @@ export const TopBar = ({ roomId }: TopBarProps) => {
   // Show minimal nav bar when synced and not loading
   if (!isLoadingAudio && isSynced) {
     return (
-      <div className="h-8 bg-black/80 backdrop-blur-md z-50 flex items-center justify-between px-4 border-b border-zinc-800">
+      <div className="h-8 bg-black/80 backdrop-blur-md z-50 flex items-center px-4 border-b border-zinc-800">
         <div className="flex items-center space-x-4 text-xs text-neutral-400 py-2 md:py-0">
           {isAdmin && (
             <div className="flex items-center">
@@ -35,7 +33,7 @@ export const TopBar = ({ roomId }: TopBarProps) => {
             </div>
           )}
           <Link href="/" className="font-medium hover:text-white transition-colors">
-            Beatsync
+            vibe
           </Link>
 
           {/* NTP Measurements Indicator */}
@@ -92,27 +90,6 @@ export const TopBar = ({ roomId }: TopBarProps) => {
             <span>RTT: {roundTripEstimate.toFixed(2)}ms</span>
             <span>OL: {((audioContextManager.getContext().outputLatency ?? 0) * 1000).toFixed(0)}ms</span>
           </div>
-        </div>
-
-        <div className="flex items-center justify-center gap-2.5">
-          {/* Discord icon */}
-          <a
-            href={SOCIAL_LINKS.discord}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-neutral-400 hover:text-white transition-colors"
-          >
-            <FaDiscord className="size-[17px]" />
-          </a>
-          {/* GitHub icon in the top right */}
-          <a
-            href={SOCIAL_LINKS.github}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-neutral-400 hover:text-white transition-colors"
-          >
-            <FaGithub className="size-4" />
-          </a>
         </div>
       </div>
     );

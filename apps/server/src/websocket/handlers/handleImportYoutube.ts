@@ -121,6 +121,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
     let importedCount = 0;
     let failedCount = 0;
     let queueChanged = false;
+    const trackFailureMessages: string[] = [];
 
     for (let index = 0; index < tracks.length; index += 1) {
       const track = tracks[index];
@@ -198,6 +199,9 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
         }
       } catch (error) {
         failedCount += 1;
+        if (error instanceof Error && error.message.trim()) {
+          trackFailureMessages.push(error.message.trim());
+        }
         console.error(`Failed to import YouTube track ${track.title}:`, error);
       } finally {
         room.removeStreamJob(jobKey);
@@ -230,7 +234,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
       const artworkUrl = playlistTracks.find((track) => track.artworkUrl)?.artworkUrl;
       room.createPlaylist({
         id: playlistId,
-        name: plan.title?.trim() || "Imported Playlist",
+        name: plan.title?.trim() ?? "Imported Playlist",
         artworkUrl,
         sourceKind: "youtube",
         externalId: plan.playlistId,
@@ -262,7 +266,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
             ? `Imported ${importedCount} track${importedCount === 1 ? "" : "s"} into "${plan.title ?? "playlist"}"`
             : importedCount > 0
               ? `Imported "${tracks[0]?.title ?? "YouTube video"}"`
-              : "Failed to import the YouTube media",
+              : trackFailureMessages[0] ?? "Failed to import the YouTube media",
         importedCount,
         failedCount,
         collectionName: plan.kind === "playlist" ? plan.title : undefined,

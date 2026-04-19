@@ -1,0 +1,17 @@
+[Unit]
+Description=Beatsync Next.js client
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/beatsync/apps/client
+Environment=PATH=/home/pi/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+ExecStart=/home/pi/.bun/bin/bun run start
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

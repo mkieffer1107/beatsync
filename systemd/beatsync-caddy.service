@@ -1,0 +1,16 @@
+[Unit]
+Description=Beatsync Caddy reverse proxy
+After=network.target beatsync-server.service beatsync-client.service
+Requires=beatsync-server.service beatsync-client.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/beatsync
+ExecStart=/usr/bin/caddy run --config /home/pi/beatsync/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /home/pi/beatsync/Caddyfile
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

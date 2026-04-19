@@ -13,10 +13,27 @@ import { handleClose, handleMessage, handleOpen } from "@/routes/websocketHandle
 import { corsHeaders, errorResponse } from "@/utils/responses";
 import type { WSData } from "@/utils/websocket";
 
+const DEFAULT_SERVER_HOST = "0.0.0.0";
+const DEFAULT_SERVER_PORT = 8080;
+
+function resolveServerPort(): number {
+  const value = Number.parseInt(process.env.SERVER_PORT ?? "", 10);
+
+  if (Number.isInteger(value) && value >= 1 && value <= 65535) {
+    return value;
+  }
+
+  return DEFAULT_SERVER_PORT;
+}
+
+// Allow reverse proxies to bind Beatsync to loopback without changing code.
+const SERVER_HOST = process.env.SERVER_HOST?.trim() || DEFAULT_SERVER_HOST;
+const SERVER_PORT = resolveServerPort();
+
 // Bun.serve with WebSocket support
 const server = Bun.serve<WSData>({
-  hostname: "0.0.0.0",
-  port: 8080,
+  hostname: SERVER_HOST,
+  port: SERVER_PORT,
   async fetch(req, server) {
     const url = new URL(req.url);
     observePublicBaseUrl(url.origin);
@@ -89,7 +106,7 @@ const server = Bun.serve<WSData>({
   },
 });
 
-console.log(`HTTP listening on http://${server.hostname}:${server.port}`);
+console.log(`HTTP listening on http://${SERVER_HOST}:${SERVER_PORT}`);
 console.log(`Storage mode: ${getStorageMode()}`);
 
 if (IS_DEMO_MODE) {

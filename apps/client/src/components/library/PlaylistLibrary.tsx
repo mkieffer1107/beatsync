@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getAudioSourceArtworkUrl } from "@/lib/audioSourceDisplay";
 import { PlaylistLibraryItem, PlaylistTrack } from "@/lib/playlistLibrary";
-import { cn } from "@/lib/utils";
+import { cn, formatTime } from "@/lib/utils";
 import { useCanMutate, useGlobalStore } from "@/store/global";
 import { sendWSRequest } from "@/utils/ws";
 import { ClientActionEnum } from "@beatsync/shared";
-import { Disc3, ListMusic, PencilLine, Play, Plus, Radio, Rows3, WandSparkles } from "lucide-react";
+import { Disc3, ListMusic, Pause, PencilLine, Play, Plus, Radio, Rows3, WandSparkles } from "lucide-react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
 import { PlaylistEditorDialog, type PlaylistEditorTrack } from "./PlaylistEditorDialog";
@@ -121,6 +121,26 @@ const PlaylistCard = ({
   );
 };
 
+const PlaylistTrackArtwork = ({ src, alt }: { src: string | null; alt: string }) => {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const hasError = failedSrc === src;
+
+  if (!src || hasError) {
+    return (
+      <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-md border border-neutral-800/80 bg-neutral-900/70">
+        <Disc3 className="size-4 text-neutral-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="size-10 flex-shrink-0 overflow-hidden rounded-md border border-neutral-800/80 bg-neutral-900/70">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} className="h-full w-full object-cover" onError={() => setFailedSrc(src)} />
+    </div>
+  );
+};
+
 const PlaylistTrackRow = ({
   track,
   isActive,
@@ -135,42 +155,64 @@ const PlaylistTrackRow = ({
   onPlay: () => void;
 }) => {
   const isPlayable = canMutate && track.queueIndex >= 0;
+  const getAudioDuration = useGlobalStore((state) => state.getAudioDuration);
+  const artworkUrl = track.artworkUrl ?? getAudioSourceArtworkUrl(track.source);
+  const duration = getAudioDuration({ url: track.url });
+  const availabilityLabel = track.queueIndex >= 0 ? `Queue slot ${track.queueIndex + 1}` : "Saved only in playlist";
 
   return (
     <button
       type="button"
-      onClick={onPlay}
-      disabled={!isPlayable}
+      onClick={() => {
+        if (isPlayable) {
+          onPlay();
+        }
+      }}
+      aria-disabled={!isPlayable}
       className={cn(
-        "flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors",
-        "border-white/6 bg-white/[0.02]",
-        canMutate ? "hover:border-white/14 hover:bg-white/[0.04]" : "cursor-default opacity-90",
-        isActive ? "border-white/18 bg-white/[0.05]" : null
+        "group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
+        isPlayable ? "cursor-pointer hover:bg-white/[0.03]" : "cursor-default",
+        isActive ? "bg-white/[0.04]" : null
       )}
     >
-      <div
-        className={cn(
-          "flex size-9 flex-shrink-0 items-center justify-center rounded-xl border text-xs font-medium",
-          isActive ? "border-white/20 bg-white text-black" : "border-white/10 bg-neutral-900 text-neutral-400"
+      <div className="relative flex h-6 w-7 flex-shrink-0 items-center justify-center text-sm font-medium">
+        {isPlayable ? (
+          <>
+            <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+              {isActive && isPlaying ? (
+                <Pause className="size-3.5 fill-current text-white" />
+              ) : (
+                <Play className="size-3.5 fill-current text-white" />
+              )}
+            </span>
+            <span
+              className={cn(
+                "absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0",
+                isActive ? "text-primary-400" : "text-neutral-500"
+              )}
+            >
+              {isActive && isPlaying ? <Radio className="size-4" /> : track.position}
+            </span>
+          </>
+        ) : (
+          <span className="text-neutral-500">{track.position}</span>
         )}
-      >
-        {isActive && isPlaying ? <Radio className="size-4" /> : track.position}
       </div>
+
+      <PlaylistTrackArtwork src={artworkUrl} alt={track.title} />
 
       <div className="min-w-0 flex-1">
-        <div className={cn("truncate text-sm font-medium", isActive ? "text-white" : "text-neutral-200")}>
+        <div className={cn("truncate text-sm font-medium", isActive ? "text-primary-400" : "text-neutral-200")}>
           {track.title}
         </div>
-        <div className="mt-1 text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-          {track.queueIndex >= 0 ? `Queue slot ${track.queueIndex + 1}` : "Library only"}
+        <div className="mt-0.5 truncate text-[11px] uppercase tracking-[0.14em] text-neutral-500">
+          {availabilityLabel}
         </div>
       </div>
 
-      {isPlayable ? (
-        <div className="flex size-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-neutral-300">
-          <Play className="size-3.5 fill-current" />
-        </div>
-      ) : null}
+      <div className={cn("min-w-[3.25rem] text-right text-xs", duration > 0 ? "text-neutral-500" : "text-neutral-700")}>
+        {duration > 0 ? formatTime(duration) : "--:--"}
+      </div>
     </button>
   );
 };
@@ -425,8 +467,8 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2">
             {playlists.map((playlist) => (
               <motion.div key={playlist.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
                 <PlaylistCard
@@ -440,90 +482,88 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
           </div>
 
           {visiblePlaylist ? (
-            <Card className="overflow-hidden border-white/8 bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 py-0 shadow-[0_28px_80px_-42px_rgba(0,0,0,0.9)]">
-              <CardContent className="px-0 py-0">
-                <div className="border-b border-white/6 px-5 py-5">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex items-start gap-4">
-                      <PlaylistArtwork playlist={visiblePlaylist} />
+            <div className="overflow-hidden rounded-[1.75rem] border border-white/8 bg-black/20 shadow-[0_28px_80px_-42px_rgba(0,0,0,0.9)]">
+              <div className="border-b border-white/6 px-5 py-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="flex items-start gap-4">
+                    <PlaylistArtwork playlist={visiblePlaylist} />
 
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
-                            {getPlaylistAccentLabel(visiblePlaylist)}
-                          </Badge>
-                          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
-                            {visiblePlaylist.trackCount} tracks
-                          </Badge>
-                        </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
+                          {getPlaylistAccentLabel(visiblePlaylist)}
+                        </Badge>
+                        <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
+                          {visiblePlaylist.trackCount} tracks
+                        </Badge>
+                      </div>
 
-                        <div className="mt-3 text-xl font-semibold text-white">{visiblePlaylist.name}</div>
-                        <div className="mt-1 max-w-2xl text-sm leading-relaxed text-neutral-400">
-                          {visiblePlaylist.description ??
-                            "This playlist is available as a first-class library object. The queue below remains the live playback order for the room."}
-                        </div>
+                      <div className="mt-3 text-xl font-semibold text-white">{visiblePlaylist.name}</div>
+                      <div className="mt-1 max-w-3xl text-sm leading-relaxed text-neutral-400">
+                        {visiblePlaylist.description ??
+                          "Playlist tracks stay in the same full list view as the rest of the room library."}
                       </div>
                     </div>
+                  </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      {canEditVisiblePlaylist ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setEditorMode("edit")}
-                          className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
-                        >
-                          <PencilLine className="size-4" />
-                          Edit Playlist
-                        </Button>
-                      ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canEditVisiblePlaylist ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={handleQueuePlaylist}
-                        disabled={!canMutate || !visiblePlaylist || !hasLibraryOnlyTracks}
+                        onClick={() => setEditorMode("edit")}
                         className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
                       >
-                        <ListMusic className="size-4" />
-                        {hasLibraryOnlyTracks ? "Add Playlist To Queue" : "Already In Queue"}
+                        <PencilLine className="size-4" />
+                        Edit Playlist
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handlePlayPlaylist}
-                        disabled={!canMutate || !firstPlayableTrack}
-                        className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
-                      >
-                        <Play className="size-4 fill-current" />
-                        {firstPlayableTrack ? "Play First Queued Track" : "Inspect Playlist"}
-                      </Button>
-                    </div>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleQueuePlaylist}
+                      disabled={!canMutate || !visiblePlaylist || !hasLibraryOnlyTracks}
+                      className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+                    >
+                      <ListMusic className="size-4" />
+                      {hasLibraryOnlyTracks ? "Add Playlist To Queue" : "Already In Queue"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handlePlayPlaylist}
+                      disabled={!canMutate || !firstPlayableTrack}
+                      className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+                    >
+                      <Play className="size-4 fill-current" />
+                      {firstPlayableTrack ? "Play First Queued Track" : "Inspect Playlist"}
+                    </Button>
                   </div>
                 </div>
+              </div>
 
-                {visiblePlaylist.tracks.length > 0 ? (
-                  <div className="space-y-2 px-4 py-4">
-                    {visiblePlaylist.tracks.map((track) => (
-                      <PlaylistTrackRow
-                        key={`${visiblePlaylist.id}:${track.url}`}
-                        track={track}
-                        canMutate={canMutate}
-                        isActive={selectedAudioUrl === track.url}
-                        isPlaying={isPlaying}
-                        onPlay={() => handleTrackSelect(track)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="px-5 py-8 text-sm text-neutral-400">
-                    This playlist is empty.{" "}
-                    {canEditVisiblePlaylist
-                      ? "Use Edit Playlist to add tracks."
-                      : "Add tracks from the queue to start using it."}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+              {visiblePlaylist.tracks.length > 0 ? (
+                <div className="divide-y divide-white/6">
+                  {visiblePlaylist.tracks.map((track) => (
+                    <PlaylistTrackRow
+                      key={`${visiblePlaylist.id}:${track.url}`}
+                      track={track}
+                      canMutate={canMutate}
+                      isActive={selectedAudioUrl === track.url}
+                      isPlaying={isPlaying}
+                      onPlay={() => handleTrackSelect(track)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="px-5 py-8 text-sm text-neutral-400">
+                  This playlist is empty.{" "}
+                  {canEditVisiblePlaylist
+                    ? "Use Edit Playlist to add tracks."
+                    : "Add tracks from the queue to start using it."}
+                </div>
+              )}
+            </div>
           ) : null}
         </div>
       )}

@@ -1,7 +1,6 @@
 "use client";
 import { Button } from "@/components/ui/button";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
-import { SOCIAL_LINKS } from "@/constants";
 import { fetchActiveRooms } from "@/lib/api";
 import { generateName } from "@/lib/randomNames";
 import { validateFullRoomId, validatePartialRoomId } from "@/lib/room";
@@ -12,7 +11,6 @@ import { AnimatePresence, motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { FaDiscord, FaGithub } from "react-icons/fa";
 import { toast } from "sonner";
 import { ActiveRooms } from "./ActiveRooms";
 import { AnnouncementBanner } from "./AnnouncementBanner";
@@ -114,7 +112,7 @@ export const Join = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.13 }}
           >
-            Join a Beatsync Room
+            Join a vibe room
           </motion.h2>
 
           <motion.p
@@ -299,42 +297,6 @@ export const Join = () => {
           >
             Use native device speakers.
           </motion.p>
-
-          {/* Divider */}
-          <motion.div
-            className="w-full h-px bg-neutral-800 my-4"
-            initial={{ opacity: 0, scaleX: 0 }}
-            animate={{ opacity: 1, scaleX: 1 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
-          />
-
-          {/* Social links */}
-          <motion.div
-            className="flex items-center gap-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.6 }}
-          >
-            <a
-              href={SOCIAL_LINKS.discord}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-neutral-400 hover:text-white transition-colors text-xs"
-            >
-              <FaDiscord className="size-[17px]" />
-              <span>Join Community</span>
-            </a>
-            <div className="w-px h-4 bg-neutral-700" />
-            <a
-              href={SOCIAL_LINKS.github}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-neutral-400 hover:text-white transition-colors text-xs"
-            >
-              <FaGithub className="size-4" />
-              <span>GitHub</span>
-            </a>
-          </motion.div>
         </motion.div>
 
         {/* Active Rooms Section */}

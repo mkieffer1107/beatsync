@@ -1,0 +1,17 @@
+[Unit]
+Description=Beatsync Bun server
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/beatsync/apps/server
+Environment=PATH=/home/pi/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SERVER_HOST=127.0.0.1
+Environment=SERVER_PORT=8080
+ExecStart=/home/pi/.bun/bin/bun run start
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

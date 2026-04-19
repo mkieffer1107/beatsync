@@ -27,6 +27,15 @@ NEXT_PUBLIC_API_URL=http://localhost:8080
 NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws
 ```
 
+If you run Beatsync behind a reverse proxy on a single hostname, leave those two
+variables unset and the client will infer same-origin API and WebSocket URLs.
+A sample LAN reverse proxy config is checked in at [`Caddyfile`](./Caddyfile).
+For a Pi-style single-hostname stack, use `bun run lan:dev` for development or
+`bun run lan:start` after building. Those scripts start the client, server, and
+Caddy together.
+If you want one command that installs deps, builds everything, validates Caddy,
+and starts the production stack, use `bun run lan:prod`.
+
 Run the following commands to start the server and client:
 
 ```sh

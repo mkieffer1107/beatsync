@@ -73,7 +73,7 @@ export const handleDeleteAudioSources: HandlerFunction<ExtractWSRequestFrom["DEL
       console.log(`🗑️ Deleted storage object: ${audioKey}`);
 
       const artworkKey = source.artworkUrl ? extractKeyFromUrl(source.artworkUrl) : null;
-      if (artworkKey && artworkKey.startsWith(roomScopedPrefix)) {
+      if (artworkKey?.startsWith(roomScopedPrefix)) {
         const artworkStillReferencedBySource = currentSources.some(
           (candidate) => candidate.url !== source.url && candidate.artworkUrl === source.artworkUrl
         );
