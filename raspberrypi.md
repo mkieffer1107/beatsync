@@ -184,6 +184,9 @@ client, server, and Caddy together.
 - `apps/client/.env.production`
 
 That lets you keep your existing `.env` files for development.
+If you need to override the client bind address for the root LAN launchers, set
+`CLIENT_HOSTNAME` and `CLIENT_PORT` there instead of relying on the shell's own
+`HOSTNAME` variable.
 
 For a first Pi deployment, Option A is still simpler, but Option B is the cleanest branded setup once local DNS is working.
 

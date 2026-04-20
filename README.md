@@ -41,6 +41,9 @@ and starts the production stack, use `bun run lan:prod`.
 That production launcher reads [`apps/server/.env.production`](./apps/server/.env.production)
 and [`apps/client/.env.production`](./apps/client/.env.production), so your
 existing `.env` files can stay focused on local development.
+For the LAN launcher, use `CLIENT_HOSTNAME` / `CLIENT_PORT` in those env files if
+you need to override the client bind address. That avoids conflicts with the
+shell's own `HOSTNAME` variable on systems like Raspberry Pi OS.
 
 Run the following commands to start the server and client:
 
