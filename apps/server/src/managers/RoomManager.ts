@@ -351,6 +351,8 @@ export class RoomManager {
     return {
       sourceKind: "upload",
       ...source,
+      externalId: source.externalId,
+      metadata: source.metadata ? { ...source.metadata } : undefined,
       collection: source.collection ? { ...source.collection } : undefined,
     };
   }
@@ -534,6 +536,55 @@ export class RoomManager {
     return undefined;
   }
 
+  findTrackByExternalId(externalId: string): AudioSourceType | undefined {
+    const queueTrack = this.audioSources.find((source) => source.externalId === externalId);
+    if (queueTrack) {
+      return queueTrack;
+    }
+
+    for (const playlist of this.playlists) {
+      const playlistTrack = playlist.tracks.find((track) => track.externalId === externalId);
+      if (playlistTrack) {
+        return playlistTrack;
+      }
+    }
+
+    return undefined;
+  }
+
+  findTrackByUrl(url: string): AudioSourceType | undefined {
+    const queueTrack = this.audioSources.find((source) => source.url === url);
+    if (queueTrack) {
+      return queueTrack;
+    }
+
+    for (const playlist of this.playlists) {
+      const playlistTrack = playlist.tracks.find((track) => track.url === url);
+      if (playlistTrack) {
+        return playlistTrack;
+      }
+    }
+
+    return undefined;
+  }
+
+  appendTracksToPlaylist(playlistId: string, tracks: AudioSourceInput[]): PlaylistType | undefined {
+    const playlist = this.getPlaylist(playlistId);
+    if (!playlist) {
+      return undefined;
+    }
+
+    const appendedTracks = this.normalizePlaylistTracks(tracks);
+    if (appendedTracks.length === 0) {
+      return this.clonePlaylist(playlist);
+    }
+
+    playlist.tracks = this.normalizePlaylistTracks([...playlist.tracks, ...appendedTracks]);
+    playlist.trackUrls = this.dedupeTrackUrls([...playlist.trackUrls, ...appendedTracks.map((track) => track.url)]);
+    playlist.updatedAt = Date.now();
+    return this.clonePlaylist(playlist);
+  }
+
   queuePlaylist(playlistId: string): { addedCount: number; playlist: PlaylistType; sources: AudioSourceType[] } | null {
     const playlist = this.getPlaylist(playlistId);
     if (!playlist) {
@@ -561,6 +612,32 @@ export class RoomManager {
     return {
       addedCount,
       playlist: this.clonePlaylist(playlist),
+      sources: this.audioSources,
+    };
+  }
+
+  queueTracks(trackUrls: string[]): { addedCount: number; sources: AudioSourceType[] } {
+    const queueUrls = new Set(this.audioSources.map((source) => source.url));
+    const requestedUrls = this.dedupeTrackUrls(trackUrls);
+    let addedCount = 0;
+
+    for (const url of requestedUrls) {
+      if (queueUrls.has(url)) {
+        continue;
+      }
+
+      const track = this.findTrackByUrl(url);
+      if (!track) {
+        continue;
+      }
+
+      this.audioSources.push(this.normalizeAudioSource(track));
+      queueUrls.add(track.url);
+      addedCount += 1;
+    }
+
+    return {
+      addedCount,
       sources: this.audioSources,
     };
   }

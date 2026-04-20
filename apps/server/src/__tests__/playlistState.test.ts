@@ -72,4 +72,115 @@ describe("Playlist State", () => {
       "https://example.com/alpha.mp3",
     ]);
   });
+
+  it("finds existing tracks by external id across queue and playlist storage", () => {
+    const room = globalManager.getOrCreateRoom("playlist-external-id-room");
+    room.addAudioSource({
+      url: "https://example.com/provider-track.mp3",
+      sourceKind: "provider",
+      externalId: "provider:42",
+      metadata: {
+        providerTrackId: "42",
+      },
+    });
+
+    room.createPlaylist({
+      name: "Imported Set",
+      sourceKind: "youtube",
+      trackUrls: ["https://example.com/youtube-track.mp3"],
+      tracks: [
+        {
+          url: "https://example.com/youtube-track.mp3",
+          sourceKind: "youtube",
+          externalId: "youtube:abc123",
+          originalUrl: "https://www.youtube.com/watch?v=abc123",
+          metadata: {
+            sourceUrl: "https://www.youtube.com/watch?v=abc123",
+            youtubeVideoId: "abc123",
+          },
+        },
+      ],
+    });
+
+    expect(room.findTrackByExternalId("provider:42")?.url).toBe("https://example.com/provider-track.mp3");
+    expect(room.findTrackByExternalId("youtube:abc123")?.url).toBe("https://example.com/youtube-track.mp3");
+  });
+
+  it("appends playlist-only tracks without forcing them into the live queue", () => {
+    const room = globalManager.getOrCreateRoom("playlist-append-room");
+    const playlist = room.createPlaylist({
+      name: "Imported Set",
+      sourceKind: "youtube",
+      trackUrls: ["https://example.com/one.mp3"],
+      tracks: [
+        {
+          url: "https://example.com/one.mp3",
+          sourceKind: "youtube",
+          externalId: "youtube:one",
+          originalUrl: "https://www.youtube.com/watch?v=one",
+          metadata: {
+            sourceUrl: "https://www.youtube.com/watch?v=one",
+            youtubeVideoId: "one",
+          },
+        },
+      ],
+    });
+
+    room.appendTracksToPlaylist(playlist.id, [
+      {
+        url: "https://example.com/two.mp3",
+        sourceKind: "youtube",
+        externalId: "youtube:two",
+        originalUrl: "https://www.youtube.com/watch?v=two",
+        metadata: {
+          sourceUrl: "https://www.youtube.com/watch?v=two",
+          youtubeVideoId: "two",
+        },
+      },
+    ]);
+
+    expect(room.getAudioSources()).toHaveLength(0);
+    expect(room.getPlaylists()[0]?.trackUrls).toEqual(["https://example.com/one.mp3", "https://example.com/two.mp3"]);
+    expect(room.getPlaylists()[0]?.tracks.map((track) => track.externalId)).toEqual(["youtube:one", "youtube:two"]);
+  });
+
+  it("can queue playlist-only tracks by url so library playback can start from saved tracks", () => {
+    const room = globalManager.getOrCreateRoom("playlist-queue-tracks-room");
+    room.createPlaylist({
+      name: "Saved Set",
+      trackUrls: ["https://example.com/one.mp3", "https://example.com/two.mp3"],
+      tracks: [
+        {
+          url: "https://example.com/one.mp3",
+          title: "One",
+          sourceKind: "youtube",
+          externalId: "youtube:one",
+          originalUrl: "https://www.youtube.com/watch?v=one",
+          metadata: {
+            sourceUrl: "https://www.youtube.com/watch?v=one",
+            youtubeVideoId: "one",
+          },
+        },
+        {
+          url: "https://example.com/two.mp3",
+          title: "Two",
+          sourceKind: "youtube",
+          externalId: "youtube:two",
+          originalUrl: "https://www.youtube.com/watch?v=two",
+          metadata: {
+            sourceUrl: "https://www.youtube.com/watch?v=two",
+            youtubeVideoId: "two",
+          },
+        },
+      ],
+    });
+
+    const queued = room.queueTracks(["https://example.com/two.mp3", "https://example.com/one.mp3"]);
+
+    expect(queued.addedCount).toBe(2);
+    expect(room.getAudioSources().map((source) => source.url)).toEqual([
+      "https://example.com/two.mp3",
+      "https://example.com/one.mp3",
+    ]);
+  });
 });

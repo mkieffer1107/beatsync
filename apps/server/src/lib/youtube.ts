@@ -12,6 +12,7 @@ interface YoutubeFlatEntry {
   _type?: string;
   id?: string;
   title?: string;
+  duration?: number;
   url?: string;
   webpage_url?: string;
   original_url?: string;
@@ -30,6 +31,7 @@ export interface YoutubeImportTrack {
   title: string;
   sourceUrl: string;
   thumbnailUrl?: string;
+  durationSeconds?: number;
 }
 
 export interface YoutubeImportPlan {
@@ -360,6 +362,7 @@ function toTrack(entry: YoutubeFlatEntry): YoutubeImportTrack | null {
     title,
     sourceUrl,
     thumbnailUrl: getBestThumbnailUrl(entry),
+    durationSeconds: typeof entry.duration === "number" && entry.duration > 0 ? entry.duration : undefined,
   };
 }
 

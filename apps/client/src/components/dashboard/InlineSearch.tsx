@@ -3,9 +3,7 @@
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
 import { useCanMutate, useGlobalStore } from "@/store/global";
-import { sendWSRequest } from "@/utils/ws";
-import { ClientActionEnum } from "@beatsync/shared";
-import { ArrowDown, Search as SearchIcon, X, ZapIcon } from "lucide-react";
+import { ArrowDown, Search as SearchIcon, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import * as React from "react";
 import { useForm } from "react-hook-form";
@@ -22,13 +20,6 @@ export function InlineSearch() {
   const isMobile = useIsMobile();
   const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const canMutate = useCanMutate();
-  const socket = useGlobalStore((state) => state.socket);
-  const setIsSearching = useGlobalStore((state) => state.setIsSearching);
-  const setSearchQuery = useGlobalStore((state) => state.setSearchQuery);
-  const setSearchOffset = useGlobalStore((state) => state.setSearchOffset);
-  const setHasMoreResults = useGlobalStore((state) => state.setHasMoreResults);
-  const searchResults = useGlobalStore((state) => state.searchResults);
-  const isSearching = useGlobalStore((state) => state.isSearching);
   const activeStreamJobs = useGlobalStore((state) => state.activeStreamJobs);
   const { register, handleSubmit, setFocus, watch, reset } = useForm<SearchForm>({
     defaultValues: { query: "" },
@@ -86,37 +77,21 @@ export function InlineSearch() {
   React.useEffect(() => {
     if (!watchedQuery || watchedQuery.trim() === "") {
       setShowResults(false);
+      return;
     }
-  }, [watchedQuery]);
+
+    if (canMutate) {
+      setShowResults(true);
+    }
+  }, [canMutate, watchedQuery]);
 
   const onSubmit = (data: SearchForm) => {
     if (!canMutate) {
       return;
     }
 
-    if (!socket) {
-      console.error("WebSocket not connected");
-      return;
-    }
-
     if (!data.query || !data.query.trim()) return;
-
-    console.log("Sending search request", data.query);
-
-    // Reset pagination state for new search and set loading state
-    setSearchOffset(0);
-    setHasMoreResults(false);
-    setIsSearching(true);
-    setSearchQuery(data.query);
     setShowResults(true);
-
-    sendWSRequest({
-      ws: socket,
-      request: {
-        type: ClientActionEnum.enum.SEARCH_MUSIC,
-        query: data.query,
-      },
-    });
   };
 
   const handleTrackSelection = () => {
@@ -248,7 +223,7 @@ export function InlineSearch() {
           <input
             {...register("query")}
             type="text"
-            placeholder={canMutate ? "What do you want to play?" : "Search requires admin permissions"}
+            placeholder={canMutate ? "Search downloaded music" : "Search requires admin permissions"}
             onFocus={handleFocus}
             onBlur={() => setIsFocused(false)}
             disabled={!canMutate}
@@ -297,12 +272,6 @@ export function InlineSearch() {
         </div>
       </form>
 
-      {/* Beta Disclaimer */}
-      <div className="mt-2 flex items-center gap-1 text-[10px] font-mono text-neutral-500 ml-0.5">
-        <ZapIcon className="size-3 text-neutral-400 stroke-1" />
-        <span>[EXPERIMENTAL FREE BETA]</span>
-      </div>
-
       {/* Search Results Dropdown */}
       <AnimatePresence>
         {showResults && canMutate && (
@@ -333,12 +302,12 @@ export function InlineSearch() {
                 isMobile ? "max-h-[70vh]" : "max-h-[60vh]"
               )}
             >
-              {isSearching || searchResults ? (
-                <SearchResults className="p-2" onTrackSelect={handleTrackSelection} />
+              {watchedQuery?.trim() ? (
+                <SearchResults query={watchedQuery} className="p-2" onTrackSelect={handleTrackSelection} />
               ) : (
                 <div className="p-8 text-center">
                   <h3 className="text-lg font-medium text-white mb-2">Start typing to search</h3>
-                  <p className="text-neutral-400 text-sm">Find songs, artists, and albums</p>
+                  <p className="text-neutral-400 text-sm">Find downloaded tracks in this room</p>
                 </div>
               )}
             </div>

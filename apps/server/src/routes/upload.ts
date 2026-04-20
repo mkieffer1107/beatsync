@@ -74,7 +74,7 @@ export const handleUploadComplete = async (req: Request, server: BunServer) => {
       return errorResponse(`Invalid request data: ${parseResult.error.message}`, 400);
     }
 
-    const { roomId, originalName, publicUrl } = parseResult.data;
+    const { roomId, originalName, publicUrl, durationSeconds } = parseResult.data;
     observePublicBaseUrl(new URL(req.url).origin);
 
     // Check if room exists
@@ -93,6 +93,7 @@ export const handleUploadComplete = async (req: Request, server: BunServer) => {
       url: publicUrl,
       title,
       sourceKind: "upload",
+      metadata: durationSeconds && durationSeconds > 0 ? { durationSeconds } : undefined,
     });
 
     console.log(`✅ Audio upload completed - broadcasting to room ${roomId} new sources: ${JSON.stringify(sources)}`);

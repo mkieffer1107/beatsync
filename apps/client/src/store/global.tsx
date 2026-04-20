@@ -9,6 +9,7 @@ import {
   normalizePlaylists,
   PlaylistLibraryItem,
 } from "@/lib/playlistLibrary";
+import { getCachedAudioDuration, getStoredAudioDuration, primeAudioDuration } from "@/lib/audioDuration";
 import { getApiUrl } from "@/lib/urls";
 import { extractFileNameFromUrl, getAudioSourceDisplayName } from "@/lib/utils";
 import {
@@ -90,6 +91,12 @@ export const AudioSourceStateSchema = z.discriminatedUnion("status", [
 ]);
 export type AudioSourceState = z.infer<typeof AudioSourceStateSchema>;
 
+export interface PlaybackContext {
+  scope: "all-tracks" | "playlist";
+  playlistId?: string | null;
+  urls: string[];
+}
+
 // Interface for just the state values (without methods)
 interface GlobalStateValues {
   // Audio Sources
@@ -98,6 +105,7 @@ interface GlobalStateValues {
   playlistLibraryOrigin: "derived" | "server" | null;
   playlistServerPayload: unknown[] | null;
   selectedPlaylistId: string | null;
+  pendingPlaylistRefreshIds: string[];
   bufferAccessQueue: string[]; // Track URL access order for LRU eviction
   isInitingSystem: boolean;
   hasUserStartedSystem: boolean; // Track if user has clicked "Start System" at least once
@@ -141,6 +149,7 @@ interface GlobalStateValues {
 
   // Shuffle state
   isShuffled: boolean;
+  playbackContext: PlaybackContext | null;
   reconnectionInfo: {
     isReconnecting: boolean;
     currentAttempt: number;
@@ -178,6 +187,7 @@ interface GlobalState extends GlobalStateValues {
   getSelectedPlaylist: () => PlaylistLibraryItem | null;
   handleSetAudioSources: (data: SetAudioSourcesType) => void;
   setSelectedPlaylistId: (playlistId: string | null) => void;
+  setPlaylistRefreshPending: (playlistId: string, isPending: boolean) => void;
   syncPlaylists: (playlists: unknown) => void;
 
   setIsInitingSystem: (isIniting: boolean) => void;
@@ -209,7 +219,11 @@ interface GlobalState extends GlobalStateValues {
   processSpatialConfig: (config: SpatialConfigType) => void;
   pauseAudio: (data: { when: number }) => void;
   getCurrentTrackPosition: () => number;
+  getPlaybackOrder: () => string[];
+  getPlaybackOrderLength: () => number;
+  setPlaybackContext: (context: PlaybackContext | null) => void;
   toggleShuffle: () => void;
+  setShuffleEnabled: (enabled: boolean) => void;
   skipToNextTrack: (isAutoplay?: boolean) => void;
   skipToPreviousTrack: () => void;
   getCurrentGainValue: () => number;
@@ -256,6 +270,7 @@ const initialState: GlobalStateValues = {
   playlistLibraryOrigin: null,
   playlistServerPayload: null,
   selectedPlaylistId: null,
+  pendingPlaylistRefreshIds: [],
   bufferAccessQueue: [],
 
   // Audio playback state
@@ -267,6 +282,7 @@ const initialState: GlobalStateValues = {
 
   // Spatial audio
   isShuffled: false,
+  playbackContext: null,
   isSpatialAudioEnabled: false,
   isDraggingListeningSource: false,
   listeningSourcePosition: { x: GRID.SIZE / 2, y: GRID.SIZE / 2 },
@@ -392,6 +408,93 @@ const resolvePlaylistLibrary = ({
   return {
     playlists: derivedPlaylists,
     origin: derivedPlaylists.length > 0 ? ("derived" as const) : null,
+  };
+};
+
+const buildAllTracksPlaybackUrls = ({
+  sources,
+  playlists,
+}: {
+  sources: AudioSourceType[];
+  playlists: PlaylistLibraryItem[];
+}) => {
+  const urls: string[] = [];
+  const seenUrls = new Set<string>();
+
+  sources.forEach((source) => {
+    if (!seenUrls.has(source.url)) {
+      seenUrls.add(source.url);
+      urls.push(source.url);
+    }
+  });
+
+  playlists.forEach((playlist) => {
+    playlist.tracks.forEach((track) => {
+      if (!seenUrls.has(track.url)) {
+        seenUrls.add(track.url);
+        urls.push(track.url);
+      }
+    });
+  });
+
+  return urls;
+};
+
+const getQueuePlaybackOrder = (audioSources: AudioSourceState[]) => audioSources.map((audioSource) => audioSource.source.url);
+
+const resolvePlaybackOrder = (state: Pick<GlobalStateValues, "audioSources" | "playbackContext" | "selectedAudioUrl">) => {
+  const queueOrder = getQueuePlaybackOrder(state.audioSources);
+  const context = state.playbackContext;
+
+  if (!context || context.urls.length === 0) {
+    return queueOrder;
+  }
+
+  const availableUrls = new Set(queueOrder);
+  const contextOrder = context.urls.filter((url) => availableUrls.has(url));
+
+  if (contextOrder.length === 0) {
+    return queueOrder;
+  }
+
+  if (state.selectedAudioUrl && !contextOrder.includes(state.selectedAudioUrl)) {
+    return queueOrder;
+  }
+
+  return contextOrder;
+};
+
+const syncPlaybackContext = ({
+  currentContext,
+  sources,
+  playlists,
+  selectedAudioUrl,
+}: {
+  currentContext: PlaybackContext | null;
+  sources: AudioSourceType[];
+  playlists: PlaylistLibraryItem[];
+  selectedAudioUrl: string;
+}) => {
+  if (!currentContext) {
+    return null;
+  }
+
+  const urls =
+    currentContext.scope === "playlist"
+      ? playlists.find((playlist) => playlist.id === currentContext.playlistId)?.tracks.map((track) => track.url) ?? []
+      : buildAllTracksPlaybackUrls({ sources, playlists });
+
+  if (urls.length === 0) {
+    return null;
+  }
+
+  if (selectedAudioUrl && !urls.includes(selectedAudioUrl)) {
+    return null;
+  }
+
+  return {
+    ...currentContext,
+    urls,
   };
 };
 
@@ -1205,6 +1308,20 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       return Math.min(playbackOffset + elapsedSinceStart, state.duration);
     },
 
+    getPlaybackOrder: () => {
+      const state = get();
+      return resolvePlaybackOrder(state);
+    },
+
+    getPlaybackOrderLength: () => {
+      const state = get();
+      return resolvePlaybackOrder(state).length;
+    },
+
+    setPlaybackContext: (context) => {
+      set({ playbackContext: context && context.urls.length > 0 ? context : null });
+    },
+
     playAudio: async (data: { offset: number; when: number; absoluteStartTime?: number; audioIndex?: number }) => {
       const state = get();
       const { sourceNode, audioContext } = getAudioPlayer(state);
@@ -1389,26 +1506,46 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
     },
 
     skipToNextTrack: (isAutoplay = false) => {
-      // Accept optional isAutoplay flag
       const state = get();
-      const { audioSources: audioSources, selectedAudioUrl: selectedAudioId, isShuffled } = state;
-      if (audioSources.length <= 1) return; // Can't skip if only one track
-
-      const currentIndex = state.findAudioIndexByUrl(selectedAudioId);
-      if (currentIndex === null) return;
-
-      let nextIndex: number;
-      if (isShuffled) {
-        // Shuffle logic: pick a random index DIFFERENT from the current one
-        do {
-          nextIndex = Math.floor(Math.random() * audioSources.length);
-        } while (nextIndex === currentIndex);
-      } else {
-        // Normal sequential logic
-        nextIndex = (currentIndex + 1) % audioSources.length;
+      const { selectedAudioUrl: selectedAudioId, isShuffled, playbackContext } = state;
+      const playbackOrder = resolvePlaybackOrder(state);
+      if (playbackOrder.length <= 1) {
+        if (isAutoplay) {
+          set({
+            isPlaying: false,
+            currentTime: state.duration,
+            playbackOffset: state.duration,
+            playbackStartTime: 0,
+          });
+        }
+        return;
       }
 
-      const nextAudioId = audioSources[nextIndex].source.url;
+      const currentIndex = playbackOrder.indexOf(selectedAudioId);
+      if (currentIndex < 0) return;
+
+      let nextAudioId: string | null = null;
+      if (isShuffled) {
+        const candidateUrls = playbackOrder.filter((url) => url !== selectedAudioId);
+        nextAudioId = candidateUrls[Math.floor(Math.random() * candidateUrls.length)] ?? null;
+      } else if (playbackContext) {
+        nextAudioId = playbackOrder[currentIndex + 1] ?? null;
+      } else {
+        nextAudioId = playbackOrder[(currentIndex + 1) % playbackOrder.length] ?? null;
+      }
+
+      if (!nextAudioId) {
+        if (isAutoplay) {
+          set({
+            isPlaying: false,
+            currentTime: state.duration,
+            playbackOffset: state.duration,
+            playbackStartTime: 0,
+          });
+        }
+        return;
+      }
+
       // setSelectedAudioId stops any current playback and sets isPlaying to false.
       // It returns true if playback was active *before* this function was called.
       const wasPlayingBeforeSkip = state.changeAudioSource(nextAudioId);
@@ -1429,16 +1566,17 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
     skipToPreviousTrack: () => {
       const state = get();
-      const { audioSources, selectedAudioUrl: selectedAudioId /* isShuffled */ } = state; // Note: isShuffled is NOT used here currently
-      if (audioSources.length === 0) return;
+      const { selectedAudioUrl: selectedAudioId, playbackContext } = state;
+      const playbackOrder = resolvePlaybackOrder(state);
+      if (playbackOrder.length === 0) return;
 
-      const currentIndex = state.findAudioIndexByUrl(selectedAudioId);
-      if (currentIndex === null) return;
+      const currentIndex = playbackOrder.indexOf(selectedAudioId);
+      if (currentIndex < 0) return;
 
-      // Previous track always goes to the actual previous in the list, even if shuffled
-      // This is a common behavior, but could be changed if needed.
-      const prevIndex = (currentIndex - 1 + audioSources.length) % audioSources.length;
-      const prevAudioId = audioSources[prevIndex].source.url;
+      const prevAudioId = playbackContext
+        ? (playbackOrder[currentIndex - 1] ?? null)
+        : (playbackOrder[(currentIndex - 1 + playbackOrder.length) % playbackOrder.length] ?? null);
+      if (!prevAudioId) return;
 
       // setSelectedAudioId stops any current playback and sets isPlaying to false.
       // It returns true if playback was active *before* this function was called.
@@ -1454,6 +1592,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
     },
 
     toggleShuffle: () => set((state) => ({ isShuffled: !state.isShuffled })),
+
+    setShuffleEnabled: (enabled) => set({ isShuffled: enabled }),
 
     setIsSpatialAudioEnabled: (isEnabled) => set({ isSpatialAudioEnabled: isEnabled }),
 
@@ -1514,11 +1654,16 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
     getAudioDuration: ({ url }) => {
       const state = get();
       const audioSource = state.audioSources.find((as) => as.source.url === url);
-      if (!audioSource || audioSource.status !== "loaded" || !audioSource.buffer) {
-        // Return 0 for loading/error states or not found
+      if (!audioSource) {
         return 0;
       }
-      return audioSource.buffer.duration;
+
+      if (audioSource.status === "loaded" && audioSource.buffer) {
+        primeAudioDuration(url, audioSource.buffer.duration);
+        return audioSource.buffer.duration;
+      }
+
+      return getStoredAudioDuration(audioSource.source) || getCachedAudioDuration(url);
     },
 
     getSelectedTrack: () => {
@@ -1589,6 +1734,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         previousPlaylistId: state.selectedPlaylistId,
         selectedAudioUrl: currentAudioSource ?? state.selectedAudioUrl,
       });
+      const nextPlaybackContext = syncPlaybackContext({
+        currentContext: state.playbackContext,
+        sources,
+        playlists: nextPlaylistLibrary.playlists,
+        selectedAudioUrl: currentAudioSource ?? state.selectedAudioUrl,
+      });
 
       // Update state immediately to show all sources (with idle states) and cleaned queue
       set({
@@ -1597,6 +1748,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         playlists: nextPlaylistLibrary.playlists,
         playlistLibraryOrigin: nextPlaylistLibrary.origin,
         selectedPlaylistId: nextSelectedPlaylistId,
+        playbackContext: nextPlaybackContext,
       });
 
       // If currentAudioSource is provided from server, update selectedAudioUrl and start loading it
@@ -1627,6 +1779,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         // Clear selected track - don't auto-select another
         set({
           selectedAudioUrl: "",
+          playbackContext: null,
           selectedPlaylistId: selectPreferredPlaylistId({
             nextPlaylists: nextPlaylistLibrary.playlists,
             previousPlaylistId: state.selectedPlaylistId,
@@ -1652,6 +1805,25 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       });
     },
 
+    setPlaylistRefreshPending: (playlistId, isPending) => {
+      const normalizedPlaylistId = playlistId.trim();
+      if (!normalizedPlaylistId) {
+        return;
+      }
+
+      set((state) => {
+        const nextPendingIds = isPending
+          ? state.pendingPlaylistRefreshIds.includes(normalizedPlaylistId)
+            ? state.pendingPlaylistRefreshIds
+            : [...state.pendingPlaylistRefreshIds, normalizedPlaylistId]
+          : state.pendingPlaylistRefreshIds.filter((candidate) => candidate !== normalizedPlaylistId);
+
+        return {
+          pendingPlaylistRefreshIds: nextPendingIds,
+        };
+      });
+    },
+
     syncPlaylists: (playlists) => {
       const state = get();
       const sources = state.audioSources.map((audioSource) => audioSource.source);
@@ -1663,6 +1835,15 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
           playlists: derivedPlaylists,
           playlistLibraryOrigin: derivedPlaylists.length > 0 ? "derived" : null,
           playlistServerPayload: Array.isArray(playlists) ? playlists : null,
+          pendingPlaylistRefreshIds: state.pendingPlaylistRefreshIds.filter((playlistId) =>
+            derivedPlaylists.some((playlist) => playlist.id === playlistId)
+          ),
+          playbackContext: syncPlaybackContext({
+            currentContext: state.playbackContext,
+            sources,
+            playlists: derivedPlaylists,
+            selectedAudioUrl: state.selectedAudioUrl,
+          }),
           selectedPlaylistId: selectPreferredPlaylistId({
             nextPlaylists: derivedPlaylists,
             previousPlaylistId: state.selectedPlaylistId,
@@ -1676,6 +1857,15 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         playlists: normalizedPlaylists,
         playlistLibraryOrigin: "server",
         playlistServerPayload: Array.isArray(playlists) ? playlists : null,
+        pendingPlaylistRefreshIds: state.pendingPlaylistRefreshIds.filter((playlistId) =>
+          normalizedPlaylists.some((playlist) => playlist.id === playlistId)
+        ),
+        playbackContext: syncPlaybackContext({
+          currentContext: state.playbackContext,
+          sources,
+          playlists: normalizedPlaylists,
+          selectedAudioUrl: state.selectedAudioUrl,
+        }),
         selectedPlaylistId: selectPreferredPlaylistId({
           nextPlaylists: normalizedPlaylists,
           previousPlaylistId: state.selectedPlaylistId,

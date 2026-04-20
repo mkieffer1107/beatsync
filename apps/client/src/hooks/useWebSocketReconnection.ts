@@ -52,7 +52,7 @@ export const useWebSocketReconnection = ({
   };
 
   // Schedule a reconnection attempt with exponential backoff
-  const scheduleReconnection = () => {
+  const scheduleReconnection = useCallback(() => {
     clearConnectionTimeout();
     reconnectAttempts.current++;
     useGlobalStore.getState().setReconnectionInfo({
@@ -78,21 +78,28 @@ export const useWebSocketReconnection = ({
     // Schedule reconnection with delay
     reconnectTimeout.current = setTimeout(() => {
       createConnection();
+    }, delay);
+  }, [clearConnectionTimeout, createConnection, initialInterval, maxAttempts, maxInterval, onMaxAttemptsReached]);
 
-      // Safari/iOS can silently drop WebSocket connections without firing
-      // onclose when the server is unreachable. Set a timeout to detect this
-      // and retry instead of hanging forever.
+  const watchPendingConnection = useCallback(
+    (ws: WebSocket) => {
+      clearConnectionTimeout();
+
       connectionTimeout.current = setTimeout(() => {
         const socket = useGlobalStore.getState().socket;
-        if (socket && socket.readyState !== WebSocket.OPEN) {
-          console.log("Connection timeout — server unreachable, retrying");
-          socket.onclose = () => {};
-          socket.close();
-          scheduleReconnection();
+
+        if (socket !== ws || ws.readyState === WebSocket.OPEN) {
+          return;
         }
+
+        console.log("Connection timeout — server unreachable, retrying");
+        ws.onclose = () => {};
+        ws.close();
+        scheduleReconnection();
       }, CONNECTION_TIMEOUT_MS);
-    }, delay);
-  };
+    },
+    [clearConnectionTimeout, scheduleReconnection]
+  );
 
   // Cleanup function to be called on unmount
   const cleanup = useCallback(() => {
@@ -103,6 +110,7 @@ export const useWebSocketReconnection = ({
   return {
     onConnectionOpen,
     scheduleReconnection,
+    watchPendingConnection,
     cleanup,
   };
 };

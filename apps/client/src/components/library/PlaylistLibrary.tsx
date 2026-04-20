@@ -1,19 +1,50 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { getAudioSourceArtworkUrl } from "@/lib/audioSourceDisplay";
+import {
+  getAudioSourceArtworkUrl,
+  getAudioSourceCollectionLabel,
+  getAudioSourceDisplayTitle,
+} from "@/lib/audioSourceDisplay";
+import { useResolvedAudioDuration } from "@/hooks/useResolvedAudioDuration";
 import { PlaylistLibraryItem, PlaylistTrack } from "@/lib/playlistLibrary";
 import { cn, formatTime } from "@/lib/utils";
-import { useCanMutate, useGlobalStore } from "@/store/global";
+import { type PlaybackContext, useCanMutate, useGlobalStore } from "@/store/global";
 import { sendWSRequest } from "@/utils/ws";
 import { ClientActionEnum } from "@beatsync/shared";
-import { Disc3, ListMusic, Pause, PencilLine, Play, Plus, Radio, Rows3, WandSparkles } from "lucide-react";
-import { motion } from "motion/react";
+import {
+  Disc3,
+  ListMusic,
+  Pause,
+  PencilLine,
+  Play,
+  Plus,
+  Radio,
+  RefreshCw,
+  Rows3,
+  Shuffle,
+  Trash2,
+  WandSparkles,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
 import { PlaylistEditorDialog, type PlaylistEditorTrack } from "./PlaylistEditorDialog";
+
+interface LibraryTrackItem {
+  url: string;
+  source: PlaylistTrack["source"];
+  title: string;
+  artworkUrl: string | null;
+  queueIndex: number;
+  playlistIds: string[];
+  playlistNames: string[];
+}
+
+interface PendingQueuedPlayback {
+  targetUrl: string;
+}
 
 const getPlaylistAccentLabel = (playlist: PlaylistLibraryItem) => {
   if (playlist.sourceKind === "youtube-playlist" || playlist.sourceKind === "youtube") {
@@ -26,6 +57,31 @@ const getPlaylistAccentLabel = (playlist: PlaylistLibraryItem) => {
 
   return "Collection";
 };
+
+const getTrackMetaLabel = (track: LibraryTrackItem) => {
+  const parts: string[] = [track.queueIndex >= 0 ? `Live queue ${track.queueIndex + 1}` : "Saved in playlist"];
+
+  if (track.playlistNames.length === 1) {
+    parts.push(track.playlistNames[0]);
+  } else if (track.playlistNames.length > 1) {
+    parts.push(`${track.playlistNames.length} playlists`);
+  } else {
+    const collectionLabel = getAudioSourceCollectionLabel(track.source);
+    if (collectionLabel && collectionLabel !== track.title) {
+      parts.push(collectionLabel);
+    }
+  }
+
+  return parts.join(" • ");
+};
+
+const pickRandomTrackUrl = (urls: string[]) => urls[Math.floor(Math.random() * urls.length)] ?? urls[0] ?? null;
+
+const getPlaybackButtonClassName = (isActive: boolean) =>
+  cn(
+    "border-white/10 transition-colors",
+    isActive ? "bg-white text-neutral-950 hover:bg-white/90" : "bg-white/[0.03] text-white hover:bg-white/[0.08]"
+  );
 
 const PlaylistArtwork = ({ playlist }: { playlist: PlaylistLibraryItem }) => {
   const artworkTiles = playlist.tracks
@@ -65,7 +121,7 @@ const PlaylistArtwork = ({ playlist }: { playlist: PlaylistLibraryItem }) => {
   );
 };
 
-const PlaylistCard = ({
+const PlaylistNavItem = ({
   playlist,
   isActive,
   onSelect,
@@ -83,17 +139,18 @@ const PlaylistCard = ({
       type="button"
       onClick={onSelect}
       className={cn(
-        "group w-full rounded-3xl border text-left transition-all duration-200",
-        "bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 hover:border-white/15 hover:bg-neutral-900/90",
+        "group w-full rounded-2xl border px-3.5 py-3 text-left transition-all duration-200",
         isActive
-          ? "border-white/20 shadow-[0_24px_48px_-28px_rgba(255,255,255,0.14)]"
-          : "border-white/8 shadow-[0_24px_48px_-28px_rgba(0,0,0,0.85)]"
+          ? "border-white/18 bg-white/[0.06] shadow-[0_24px_48px_-34px_rgba(255,255,255,0.16)]"
+          : "border-white/6 bg-white/[0.02] hover:border-white/12 hover:bg-white/[0.04]"
       )}
     >
-      <div className="flex items-start gap-4 p-4">
-        <PlaylistArtwork playlist={playlist} />
+      <div className="flex items-start gap-3">
+        <div className="scale-[0.84] origin-top-left">
+          <PlaylistArtwork playlist={playlist} />
+        </div>
 
-        <div className="min-w-0 flex-1 pt-0.5">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge
               variant="outline"
@@ -102,18 +159,17 @@ const PlaylistCard = ({
               {getPlaylistAccentLabel(playlist)}
             </Badge>
             {containsCurrentTrack ? (
-              <Badge className="bg-white text-black text-[10px] uppercase tracking-[0.16em]">Current Track</Badge>
+              <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-primary-400">Current</span>
             ) : null}
           </div>
 
-          <div className="mt-3 text-sm font-semibold text-white">{playlist.name}</div>
-          <div className="mt-1 text-xs leading-relaxed text-neutral-400">
+          <div className="mt-2 truncate text-sm font-medium text-white">{playlist.name}</div>
+          <div className="mt-1 text-xs text-neutral-500">
             {playlist.trackCount} {playlist.trackCount === 1 ? "track" : "tracks"}
           </div>
 
-          <div className="mt-4 flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-neutral-500">
-            <Rows3 className="size-3.5" />
-            <span>{playlist.origin === "server" ? "Server playlist" : "Built from imported tracks"}</span>
+          <div className="mt-2 truncate text-[11px] uppercase tracking-[0.16em] text-neutral-600">
+            {playlist.origin === "server" ? "Server playlist" : "Built from imported tracks"}
           </div>
         </div>
       </div>
@@ -141,79 +197,102 @@ const PlaylistTrackArtwork = ({ src, alt }: { src: string | null; alt: string })
   );
 };
 
-const PlaylistTrackRow = ({
-  track,
+const TrackListRow = ({
+  artworkUrl,
+  title,
+  metaLabel,
+  source,
+  rowNumber,
   isActive,
   canMutate,
   isPlaying,
   onPlay,
+  onDelete,
 }: {
-  track: PlaylistTrack;
+  artworkUrl: string | null;
+  title: string;
+  metaLabel: string;
+  source: PlaylistTrack["source"];
+  rowNumber: number;
   isActive: boolean;
   canMutate: boolean;
   isPlaying: boolean;
   onPlay: () => void;
+  onDelete?: () => void;
 }) => {
-  const isPlayable = canMutate && track.queueIndex >= 0;
-  const getAudioDuration = useGlobalStore((state) => state.getAudioDuration);
-  const artworkUrl = track.artworkUrl ?? getAudioSourceArtworkUrl(track.source);
-  const duration = getAudioDuration({ url: track.url });
-  const availabilityLabel = track.queueIndex >= 0 ? `Queue slot ${track.queueIndex + 1}` : "Saved only in playlist";
+  const duration = useResolvedAudioDuration(source);
+  const isPlayable = canMutate;
 
   return (
-    <button
-      type="button"
-      onClick={() => {
-        if (isPlayable) {
-          onPlay();
-        }
-      }}
-      aria-disabled={!isPlayable}
+    <div
       className={cn(
-        "group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
-        isPlayable ? "cursor-pointer hover:bg-white/[0.03]" : "cursor-default",
-        isActive ? "bg-white/[0.04]" : null
+        "group flex items-center gap-2 px-4 py-3.5 transition-colors",
+        isPlayable ? "hover:bg-white/[0.03]" : null,
+        isActive ? "bg-white/[0.05]" : null
       )}
     >
-      <div className="relative flex h-6 w-7 flex-shrink-0 items-center justify-center text-sm font-medium">
-        {isPlayable ? (
-          <>
-            <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
-              {isActive && isPlaying ? (
-                <Pause className="size-3.5 fill-current text-white" />
-              ) : (
-                <Play className="size-3.5 fill-current text-white" />
-              )}
-            </span>
-            <span
-              className={cn(
-                "absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0",
-                isActive ? "text-primary-400" : "text-neutral-500"
-              )}
-            >
-              {isActive && isPlaying ? <Radio className="size-4" /> : track.position}
-            </span>
-          </>
-        ) : (
-          <span className="text-neutral-500">{track.position}</span>
-        )}
-      </div>
-
-      <PlaylistTrackArtwork src={artworkUrl} alt={track.title} />
-
-      <div className="min-w-0 flex-1">
-        <div className={cn("truncate text-sm font-medium", isActive ? "text-primary-400" : "text-neutral-200")}>
-          {track.title}
+      <button
+        type="button"
+        onClick={() => {
+          if (isPlayable) {
+            onPlay();
+          }
+        }}
+        aria-disabled={!isPlayable}
+        className={cn("flex min-w-0 flex-1 items-center gap-3 text-left", isPlayable ? "cursor-pointer" : "cursor-default")}
+      >
+        <div className="relative flex h-6 w-8 flex-shrink-0 items-center justify-center text-sm font-medium">
+          {isPlayable ? (
+            <>
+              <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+                {isActive && isPlaying ? (
+                  <Pause className="size-3.5 fill-current text-white" />
+                ) : (
+                  <Play className="size-3.5 fill-current text-white" />
+                )}
+              </span>
+              <span
+                className={cn(
+                  "absolute inset-0 flex items-center justify-center transition-opacity group-hover:opacity-0",
+                  isActive ? "text-primary-400" : "text-neutral-500"
+                )}
+              >
+                {isActive && isPlaying ? <Radio className="size-4" /> : rowNumber}
+              </span>
+            </>
+          ) : (
+            <span className="text-neutral-500">{rowNumber}</span>
+          )}
         </div>
-        <div className="mt-0.5 truncate text-[11px] uppercase tracking-[0.14em] text-neutral-500">
-          {availabilityLabel}
-        </div>
-      </div>
 
-      <div className={cn("min-w-[3.25rem] text-right text-xs", duration > 0 ? "text-neutral-500" : "text-neutral-700")}>
-        {duration > 0 ? formatTime(duration) : "--:--"}
-      </div>
-    </button>
+        <PlaylistTrackArtwork src={artworkUrl} alt={title} />
+
+        <div className="min-w-0 flex-1">
+          <div className={cn("truncate text-sm font-medium", isActive ? "text-primary-400" : "text-neutral-200")}>
+            {title}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] uppercase tracking-[0.14em] text-neutral-500">{metaLabel}</div>
+        </div>
+
+        <div
+          className={cn("min-w-[3.25rem] text-right text-xs", duration > 0 ? "text-neutral-500" : "text-neutral-700")}
+        >
+          {duration > 0 ? formatTime(duration) : "--:--"}
+        </div>
+      </button>
+
+      {onDelete ? (
+        <button
+          type="button"
+          onClick={onDelete}
+          className="flex size-9 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-neutral-500 transition-colors hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-300"
+          aria-label={`Delete ${title}`}
+          title={`Delete ${title}`}
+        >
+          <Trash2 className="size-4" />
+        </button>
+      ) : null}
+    </div>
   );
 };
 
@@ -229,15 +308,81 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
   const changeAudioSource = useGlobalStore((state) => state.changeAudioSource);
   const broadcastPlay = useGlobalStore((state) => state.broadcastPlay);
   const broadcastPause = useGlobalStore((state) => state.broadcastPause);
+  const playbackContext = useGlobalStore((state) => state.playbackContext);
+  const isShuffled = useGlobalStore((state) => state.isShuffled);
+  const setPlaybackContext = useGlobalStore((state) => state.setPlaybackContext);
+  const setShuffleEnabled = useGlobalStore((state) => state.setShuffleEnabled);
   const activeStreamJobs = useGlobalStore((state) => state.activeStreamJobs);
   const socket = useGlobalStore((state) => state.socket);
   const canMutate = useCanMutate();
   const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
+  const [libraryView, setLibraryView] = useState<"all" | "playlist">("all");
+  const [confirmDeletePlaylistId, setConfirmDeletePlaylistId] = useState<string | null>(null);
+  const [pendingQueuedPlayback, setPendingQueuedPlayback] = useState<PendingQueuedPlayback | null>(null);
 
   const visiblePlaylist = selectedPlaylist ?? playlists[0] ?? null;
-  const firstPlayableTrack = visiblePlaylist?.tracks.find((track) => track.queueIndex >= 0) ?? null;
+  const activePlaylistId = selectedPlaylistId ?? visiblePlaylist?.id ?? null;
   const hasLibraryOnlyTracks = visiblePlaylist?.tracks.some((track) => track.queueIndex < 0) ?? false;
   const canEditVisiblePlaylist = canMutate && visiblePlaylist?.origin === "server";
+  const canRefreshVisiblePlaylist =
+    canMutate &&
+    visiblePlaylist?.origin === "server" &&
+    visiblePlaylist?.sourceKind === "youtube" &&
+    Boolean(visiblePlaylist.originalUrl || visiblePlaylist.externalId);
+
+  const libraryTracks = useMemo<LibraryTrackItem[]>(() => {
+    const trackMap = new Map<string, LibraryTrackItem>();
+
+    audioSources.forEach((sourceState, index) => {
+      const source = sourceState.source;
+      trackMap.set(source.url, {
+        url: source.url,
+        source,
+        title: getAudioSourceDisplayTitle(source),
+        artworkUrl: getAudioSourceArtworkUrl(source),
+        queueIndex: index,
+        playlistIds: [],
+        playlistNames: [],
+      });
+    });
+
+    playlists.forEach((playlist) => {
+      playlist.tracks.forEach((track) => {
+        const existing = trackMap.get(track.url);
+        if (existing) {
+          if (!existing.playlistIds.includes(playlist.id)) {
+            existing.playlistIds.push(playlist.id);
+            existing.playlistNames.push(playlist.name);
+          }
+          return;
+        }
+
+        trackMap.set(track.url, {
+          url: track.url,
+          source: track.source,
+          title: track.title,
+          artworkUrl: track.artworkUrl ?? getAudioSourceArtworkUrl(track.source),
+          queueIndex: track.queueIndex,
+          playlistIds: [playlist.id],
+          playlistNames: [playlist.name],
+        });
+      });
+    });
+
+    return [...trackMap.values()];
+  }, [audioSources, playlists]);
+
+  const savedOnlyTrackCount = libraryTracks.filter((track) => track.queueIndex < 0).length;
+  const libraryTrackUrls = useMemo(() => libraryTracks.map((track) => track.url), [libraryTracks]);
+  const visiblePlaylistTrackUrls = useMemo(
+    () => visiblePlaylist?.tracks.map((track) => track.url) ?? [],
+    [visiblePlaylist]
+  );
+  const queuedTrackUrls = useMemo(() => audioSources.map((sourceState) => sourceState.source.url), [audioSources]);
+  const queuedTrackUrlSet = useMemo(() => new Set(queuedTrackUrls), [queuedTrackUrls]);
+  const isAllTracksContextActive = playbackContext?.scope === "all-tracks";
+  const isVisiblePlaylistContextActive =
+    playbackContext?.scope === "playlist" && playbackContext.playlistId === visiblePlaylist?.id;
 
   const editorTracks = useMemo<PlaylistEditorTrack[]>(() => {
     const trackMap = new Map<string, PlaylistEditorTrack>();
@@ -291,12 +436,88 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     return true;
   };
 
-  const handleTrackSelect = (track: PlaylistTrack) => {
-    if (!canMutate || track.queueIndex < 0) {
+  useEffect(() => {
+    if (!pendingQueuedPlayback) {
       return;
     }
 
-    if (selectedAudioUrl === track.url) {
+    if (!queuedTrackUrlSet.has(pendingQueuedPlayback.targetUrl)) {
+      return;
+    }
+
+    const { targetUrl } = pendingQueuedPlayback;
+    queueMicrotask(() => {
+      setPendingQueuedPlayback(null);
+      changeAudioSource(targetUrl);
+      broadcastPlay(0);
+    });
+  }, [broadcastPlay, changeAudioSource, pendingQueuedPlayback, queuedTrackUrlSet]);
+
+  const queueMissingTrackUrls = (urls: string[]) => {
+    const missingUrls = [...new Set(urls)].filter((url) => !queuedTrackUrlSet.has(url));
+    if (missingUrls.length === 0) {
+      return missingUrls;
+    }
+
+    sendWSRequest({
+      ws: socket!,
+      request: {
+        type: ClientActionEnum.enum.QUEUE_TRACKS,
+        urls: missingUrls,
+      },
+    });
+
+    return missingUrls;
+  };
+
+  const startContextPlayback = ({
+    context,
+    targetUrl,
+    queueUrls,
+    shuffle,
+  }: {
+    context: PlaybackContext;
+    targetUrl: string;
+    queueUrls: string[];
+    shuffle: boolean;
+  }) => {
+    setPlaybackContext(context);
+    setShuffleEnabled(shuffle);
+
+    const missingUrls = queueMissingTrackUrls(queueUrls);
+    if (missingUrls.length > 0) {
+      if (!queuedTrackUrlSet.has(targetUrl)) {
+        setPendingQueuedPlayback({
+          targetUrl,
+        });
+        return;
+      }
+    }
+
+    setPendingQueuedPlayback(null);
+    changeAudioSource(targetUrl);
+    broadcastPlay(0);
+  };
+
+  const handleScopedTrackSelect = ({
+    trackUrl,
+    context,
+    queueUrls,
+  }: {
+    trackUrl: string;
+    context: PlaybackContext;
+    queueUrls: string[];
+  }) => {
+    if (!ensureMutationAccess()) {
+      return;
+    }
+
+    setPlaybackContext(context);
+    setShuffleEnabled(false);
+
+    if (selectedAudioUrl === trackUrl) {
+      queueMissingTrackUrls(queueUrls);
+      setPendingQueuedPlayback(null);
       if (isPlaying) {
         broadcastPause();
       } else {
@@ -305,17 +526,49 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
       return;
     }
 
-    changeAudioSource(track.url);
-    broadcastPlay(0);
+    startContextPlayback({
+      context,
+      targetUrl: trackUrl,
+      queueUrls,
+      shuffle: false,
+    });
   };
 
-  const handlePlayPlaylist = () => {
-    if (!firstPlayableTrack || !canMutate) {
+  const handlePlayAllTracks = (shuffle: boolean) => {
+    if (!ensureMutationAccess() || libraryTrackUrls.length === 0) {
       return;
     }
 
-    changeAudioSource(firstPlayableTrack.url);
-    broadcastPlay(0);
+    const context: PlaybackContext = {
+      scope: "all-tracks",
+      urls: libraryTrackUrls,
+    };
+
+    startContextPlayback({
+      context,
+      targetUrl: shuffle ? pickRandomTrackUrl(libraryTrackUrls)! : libraryTrackUrls[0]!,
+      queueUrls: libraryTrackUrls,
+      shuffle,
+    });
+  };
+
+  const handlePlayPlaylist = (shuffle: boolean) => {
+    if (!ensureMutationAccess() || !visiblePlaylist || visiblePlaylistTrackUrls.length === 0) {
+      return;
+    }
+
+    const context: PlaybackContext = {
+      scope: "playlist",
+      playlistId: visiblePlaylist.id,
+      urls: visiblePlaylistTrackUrls,
+    };
+
+    startContextPlayback({
+      context,
+      targetUrl: shuffle ? pickRandomTrackUrl(visiblePlaylistTrackUrls)! : visiblePlaylistTrackUrls[0]!,
+      queueUrls: visiblePlaylistTrackUrls,
+      shuffle,
+    });
   };
 
   const handleQueuePlaylist = () => {
@@ -350,6 +603,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     });
 
     setSelectedPlaylistId(playlistId);
+    setLibraryView("playlist");
     setEditorMode(null);
     toast.success(`Created "${name}"`);
   };
@@ -413,14 +667,55 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     toast.success(`Deleted "${visiblePlaylist.name}"`);
   };
 
+  const handleDeleteTrack = (track: LibraryTrackItem | PlaylistTrack) => {
+    if (!ensureMutationAccess()) {
+      return;
+    }
+
+    const affectedPlaylists = playlists.filter((playlist) => playlist.tracks.some((playlistTrack) => playlistTrack.url === track.url));
+
+    affectedPlaylists.forEach((playlist) => {
+      sendWSRequest({
+        ws: socket!,
+        request: {
+          type: ClientActionEnum.enum.SET_PLAYLIST_TRACKS,
+          playlistId: playlist.id,
+          trackUrls: playlist.tracks.filter((playlistTrack) => playlistTrack.url !== track.url).map((playlistTrack) => playlistTrack.url),
+        },
+      });
+    });
+
+    if (track.queueIndex >= 0) {
+      sendWSRequest({
+        ws: socket!,
+        request: {
+          type: ClientActionEnum.enum.DELETE_AUDIO_SOURCES,
+          urls: [track.url],
+        },
+      });
+    }
+
+    setConfirmDeletePlaylistId(null);
+    toast.success(`Deleted "${"title" in track ? track.title : "track"}"`);
+  };
+
+  const handleRefreshPlaylist = () => {
+    if (!visiblePlaylist || !ensureMutationAccess()) {
+      return;
+    }
+
+    sendWSRequest({
+      ws: socket!,
+      request: {
+        type: ClientActionEnum.enum.REFRESH_PLAYLIST,
+        playlistId: visiblePlaylist.id,
+      },
+    });
+  };
+
   return (
     <section className={cn("space-y-4", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-neutral-500">Library</div>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-white">Playlists</h2>
-        </div>
-
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {canMutate ? (
             <Button
@@ -434,6 +729,10 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
             </Button>
           ) : null}
           <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-300">
+            <Rows3 className="size-3.5" />
+            {libraryTracks.length} {libraryTracks.length === 1 ? "track" : "tracks"}
+          </Badge>
+          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-300">
             <ListMusic className="size-3.5" />
             {playlists.length} {playlists.length === 1 ? "playlist" : "playlists"}
           </Badge>
@@ -445,128 +744,376 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
         </div>
       </div>
 
-      {playlists.length === 0 ? (
-        <Card className="border-white/8 bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 py-0 shadow-[0_28px_80px_-42px_rgba(0,0,0,0.9)]">
-          <CardContent className="px-5 py-5">
-            <div className="flex items-start gap-4">
-              <div className="flex size-12 flex-shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]">
-                <WandSparkles className="size-5 text-neutral-300" />
-              </div>
-
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-white">No playlists yet</div>
-                <div className="mt-1 text-sm leading-relaxed text-neutral-400">
-                  {activeStreamJobs > 0
-                    ? "Playlist views will appear as soon as the current import finishes."
-                    : canMutate
-                      ? "Create a playlist from the current queue, or import a YouTube playlist to populate the library."
-                      : "Playlists will appear here when an admin creates one or imports a YouTube playlist."}
-                </div>
-              </div>
+      <div className="overflow-hidden rounded-[1.75rem] border border-white/8 bg-gradient-to-b from-neutral-950 via-neutral-950 to-black/90 shadow-[0_28px_80px_-42px_rgba(0,0,0,0.92)]">
+        <div className="border-b border-white/6 px-4 py-4 sm:px-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="inline-flex w-full rounded-2xl border border-white/8 bg-black/30 p-1 sm:w-auto">
+              {[
+                { value: "all" as const, label: "All Tracks", count: libraryTracks.length },
+                { value: "playlist" as const, label: "Playlists", count: playlists.length },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    setLibraryView(option.value);
+                    if (option.value === "playlist" && !activePlaylistId && playlists[0]) {
+                      setSelectedPlaylistId(playlists[0].id);
+                    }
+                  }}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition-all duration-200 sm:flex-none",
+                    libraryView === option.value
+                      ? "bg-white text-neutral-950 shadow-[0_16px_32px_-24px_rgba(255,255,255,0.6)]"
+                      : "text-neutral-400 hover:text-white"
+                  )}
+                >
+                  <span>{option.label}</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                      libraryView === option.value ? "bg-black/10 text-neutral-800" : "bg-white/[0.05] text-neutral-500"
+                    )}
+                  >
+                    {option.count}
+                  </span>
+                </button>
+              ))}
             </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {playlists.map((playlist) => (
-              <motion.div key={playlist.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-                <PlaylistCard
-                  playlist={playlist}
-                  isActive={playlist.id === (selectedPlaylistId ?? visiblePlaylist?.id)}
-                  currentTrackUrl={selectedAudioUrl}
-                  onSelect={() => setSelectedPlaylistId(playlist.id)}
-                />
-              </motion.div>
-            ))}
-          </div>
 
-          {visiblePlaylist ? (
-            <div className="overflow-hidden rounded-[1.75rem] border border-white/8 bg-black/20 shadow-[0_28px_80px_-42px_rgba(0,0,0,0.9)]">
+            <div className="text-xs text-neutral-500">
+              {libraryView === "all"
+                ? "Default view for the full downloaded room library."
+                : "Choose a playlist to inspect, edit, or push back into the queue."}
+            </div>
+          </div>
+        </div>
+
+        <AnimatePresence mode="wait" initial={false}>
+          {libraryView === "all" ? (
+            <motion.div
+              key="all"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+            >
               <div className="border-b border-white/6 px-5 py-5">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                  <div className="flex items-start gap-4">
-                    <PlaylistArtwork playlist={visiblePlaylist} />
-
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
+                  <div className="max-w-3xl">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-300">
+                        All Tracks
+                      </Badge>
+                      {savedOnlyTrackCount > 0 ? (
                         <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
-                          {getPlaylistAccentLabel(visiblePlaylist)}
+                          {savedOnlyTrackCount} playlist-only
                         </Badge>
-                        <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
-                          {visiblePlaylist.trackCount} tracks
-                        </Badge>
-                      </div>
+                      ) : null}
+                    </div>
 
-                      <div className="mt-3 text-xl font-semibold text-white">{visiblePlaylist.name}</div>
-                      <div className="mt-1 max-w-3xl text-sm leading-relaxed text-neutral-400">
-                        {visiblePlaylist.description ??
-                          "Playlist tracks stay in the same full list view as the rest of the room library."}
-                      </div>
+                    <div className="mt-3 text-xl font-semibold text-white">Room Library</div>
+                    <div className="mt-1 max-w-2xl text-sm leading-relaxed text-neutral-400">
+                      {savedOnlyTrackCount > 0
+                        ? "Every downloaded track in this room, including tracks that are only stored inside saved playlists."
+                        : "Every downloaded track currently available in this room."}
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {canEditVisiblePlaylist ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setEditorMode("edit")}
-                        className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
-                      >
-                        <PencilLine className="size-4" />
-                        Edit Playlist
-                      </Button>
+                    {libraryTrackUrls.length > 0 && canMutate ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePlayAllTracks(false)}
+                          className={getPlaybackButtonClassName(isAllTracksContextActive && !isShuffled)}
+                        >
+                          <Play className="size-4 fill-current" />
+                          Play All
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePlayAllTracks(true)}
+                          className={getPlaybackButtonClassName(isAllTracksContextActive && isShuffled)}
+                        >
+                          <Shuffle className="size-4" />
+                          Shuffle
+                        </Button>
+                      </>
                     ) : null}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleQueuePlaylist}
-                      disabled={!canMutate || !visiblePlaylist || !hasLibraryOnlyTracks}
-                      className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
-                    >
-                      <ListMusic className="size-4" />
-                      {hasLibraryOnlyTracks ? "Add Playlist To Queue" : "Already In Queue"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handlePlayPlaylist}
-                      disabled={!canMutate || !firstPlayableTrack}
-                      className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
-                    >
-                      <Play className="size-4 fill-current" />
-                      {firstPlayableTrack ? "Play First Queued Track" : "Inspect Playlist"}
-                    </Button>
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-300">
+                      {audioSources.length} in queue
+                    </Badge>
+                    {savedOnlyTrackCount > 0 ? (
+                      <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
+                        {savedOnlyTrackCount} saved only
+                      </Badge>
+                    ) : null}
                   </div>
                 </div>
               </div>
 
-              {visiblePlaylist.tracks.length > 0 ? (
+              {libraryTracks.length > 0 ? (
                 <div className="divide-y divide-white/6">
-                  {visiblePlaylist.tracks.map((track) => (
-                    <PlaylistTrackRow
-                      key={`${visiblePlaylist.id}:${track.url}`}
-                      track={track}
+                  {libraryTracks.map((track, index) => (
+                    <TrackListRow
+                      key={`library:${track.url}`}
+                      artworkUrl={track.artworkUrl}
+                      title={track.title}
+                      metaLabel={getTrackMetaLabel(track)}
+                      source={track.source}
+                      rowNumber={index + 1}
                       canMutate={canMutate}
                       isActive={selectedAudioUrl === track.url}
                       isPlaying={isPlaying}
-                      onPlay={() => handleTrackSelect(track)}
+                      onPlay={() => {
+                        const trackIndex = libraryTrackUrls.indexOf(track.url);
+                        if (trackIndex < 0) {
+                          return;
+                        }
+
+                        handleScopedTrackSelect({
+                          trackUrl: track.url,
+                          context: {
+                            scope: "all-tracks",
+                            urls: libraryTrackUrls,
+                          },
+                          queueUrls: libraryTrackUrls.slice(trackIndex),
+                        });
+                      }}
+                      onDelete={canMutate ? () => handleDeleteTrack(track) : undefined}
                     />
                   ))}
                 </div>
               ) : (
-                <div className="px-5 py-8 text-sm text-neutral-400">
-                  This playlist is empty.{" "}
-                  {canEditVisiblePlaylist
-                    ? "Use Edit Playlist to add tracks."
-                    : "Add tracks from the queue to start using it."}
+                <div className="px-5 py-8">
+                  <div className="flex items-start gap-4 rounded-3xl border border-white/8 bg-white/[0.02] px-5 py-5">
+                    <div className="flex size-12 flex-shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03]">
+                      <WandSparkles className="size-5 text-neutral-300" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-white">No tracks in the room library yet</div>
+                      <div className="mt-1 text-sm leading-relaxed text-neutral-400">
+                        {activeStreamJobs > 0
+                          ? "The library will fill in as soon as the current import finishes."
+                          : canMutate
+                            ? "Upload or import music first, then use playlists to save a curated subset."
+                            : "Tracks will appear here when an admin uploads or imports music."}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
-            </div>
-          ) : null}
-        </div>
-      )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="playlist"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="grid xl:grid-cols-[19rem_minmax(0,1fr)]"
+            >
+              <div className="border-b border-white/6 xl:border-r xl:border-b-0">
+                <div className="px-5 py-5">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">Playlists</div>
+                  <div className="mt-2 text-sm leading-relaxed text-neutral-400">
+                    Saved views of the room library. Choose one to inspect its track order or queue it again.
+                  </div>
+                </div>
+
+                {playlists.length > 0 ? (
+                  <div className="space-y-2 p-3">
+                    {playlists.map((playlist) => (
+                      <motion.div key={playlist.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                        <PlaylistNavItem
+                          playlist={playlist}
+                          isActive={playlist.id === activePlaylistId}
+                          currentTrackUrl={selectedAudioUrl}
+                          onSelect={() => {
+                            setSelectedPlaylistId(playlist.id);
+                            setLibraryView("playlist");
+                          }}
+                        />
+                      </motion.div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-5 pb-5">
+                    <div className="rounded-3xl border border-white/8 bg-white/[0.02] px-4 py-5 text-sm text-neutral-400">
+                      {activeStreamJobs > 0
+                        ? "Playlist views will appear as soon as the current import finishes."
+                        : canMutate
+                          ? "Create a playlist when you want a saved subset of the room library."
+                          : "Playlists will appear here when an admin creates one or imports a YouTube playlist."}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="min-w-0">
+                {visiblePlaylist ? (
+                  <>
+                    <div className="border-b border-white/6 px-5 py-5">
+                      <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-start 2xl:justify-between">
+                        <div className="flex items-start gap-4">
+                          <PlaylistArtwork playlist={visiblePlaylist} />
+
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-300">
+                                {getPlaylistAccentLabel(visiblePlaylist)}
+                              </Badge>
+                              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
+                                {visiblePlaylist.trackCount} tracks
+                              </Badge>
+                              {hasLibraryOnlyTracks ? (
+                                <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
+                                  Saved outside queue
+                                </Badge>
+                              ) : null}
+                            </div>
+
+                            <div className="mt-3 text-xl font-semibold text-white">{visiblePlaylist.name}</div>
+                            <div className="mt-1 max-w-3xl text-sm leading-relaxed text-neutral-400">
+                              {visiblePlaylist.description ??
+                                "This playlist isolates a saved subset of the room library without replacing the live queue."}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {canRefreshVisiblePlaylist ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleRefreshPlaylist}
+                              className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+                            >
+                              <RefreshCw className="size-4" />
+                              Refresh From YouTube
+                            </Button>
+                          ) : null}
+                          {canEditVisiblePlaylist ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditorMode("edit")}
+                              className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+                            >
+                              <PencilLine className="size-4" />
+                              Edit Playlist
+                            </Button>
+                          ) : null}
+                          {canMutate ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                if (confirmDeletePlaylistId === visiblePlaylist.id) {
+                                  handleDeletePlaylist();
+                                  return;
+                                }
+                                setConfirmDeletePlaylistId(visiblePlaylist.id);
+                              }}
+                            className={cn(
+                              "border-white/10 text-white hover:bg-white/[0.08]",
+                              confirmDeletePlaylistId === visiblePlaylist.id ? "bg-red-500/10 hover:bg-red-500/15" : "bg-white/[0.03]"
+                            )}
+                          >
+                              <Trash2 className="size-4" />
+                              {confirmDeletePlaylistId === visiblePlaylist.id ? "Confirm Delete Playlist" : "Delete Playlist"}
+                            </Button>
+                          ) : null}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleQueuePlaylist}
+                            disabled={!canMutate || !visiblePlaylist || !hasLibraryOnlyTracks}
+                            className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+                          >
+                            <ListMusic className="size-4" />
+                            {hasLibraryOnlyTracks ? "Add Playlist To Queue" : "Already In Queue"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handlePlayPlaylist(true)}
+                            disabled={!canMutate || visiblePlaylistTrackUrls.length === 0}
+                            className={getPlaybackButtonClassName(isVisiblePlaylistContextActive && isShuffled)}
+                          >
+                            <Shuffle className="size-4" />
+                            Shuffle Playlist
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handlePlayPlaylist(false)}
+                            disabled={!canMutate || visiblePlaylistTrackUrls.length === 0}
+                            className={getPlaybackButtonClassName(isVisiblePlaylistContextActive && !isShuffled)}
+                          >
+                            <Play className="size-4 fill-current" />
+                            Play Playlist
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {visiblePlaylist.tracks.length > 0 ? (
+                      <div className="divide-y divide-white/6">
+                        {visiblePlaylist.tracks.map((track) => (
+                          <TrackListRow
+                            key={`${visiblePlaylist.id}:${track.url}`}
+                            artworkUrl={track.artworkUrl ?? getAudioSourceArtworkUrl(track.source)}
+                            title={track.title}
+                            metaLabel={track.queueIndex >= 0 ? `Queue slot ${track.queueIndex + 1}` : "Saved only in playlist"}
+                            source={track.source}
+                            rowNumber={track.position}
+                            canMutate={canMutate}
+                            isActive={selectedAudioUrl === track.url}
+                            isPlaying={isPlaying}
+                            onPlay={() => {
+                              const trackIndex = visiblePlaylistTrackUrls.indexOf(track.url);
+                              if (trackIndex < 0 || !visiblePlaylist) {
+                                return;
+                              }
+
+                              handleScopedTrackSelect({
+                                trackUrl: track.url,
+                                context: {
+                                  scope: "playlist",
+                                  playlistId: visiblePlaylist.id,
+                                  urls: visiblePlaylistTrackUrls,
+                                },
+                                queueUrls: visiblePlaylistTrackUrls.slice(trackIndex),
+                              });
+                            }}
+                            onDelete={canMutate ? () => handleDeleteTrack(track) : undefined}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-5 py-8 text-sm leading-relaxed text-neutral-400">
+                        This playlist is empty.{" "}
+                        {canEditVisiblePlaylist
+                          ? "Use Edit Playlist to add tracks."
+                          : "Add tracks from the queue to start using it."}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="px-5 py-8 text-sm leading-relaxed text-neutral-400">
+                    Choose a playlist to inspect its saved tracks.
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {editorMode ? (
         <PlaylistEditorDialog

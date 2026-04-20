@@ -113,6 +113,7 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
   const {
     onConnectionOpen,
     scheduleReconnection,
+    watchPendingConnection,
     cleanup: cleanupReconnection,
   } = useWebSocketReconnection({
     createConnection: () => createConnection(),
@@ -144,6 +145,7 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
     const ws = new WebSocket(SOCKET_URL);
 
     setSocket(ws);
+    watchPendingConnection(ws);
 
     ws.onopen = async () => {
       console.log("Websocket onopen fired.");

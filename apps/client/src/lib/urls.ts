@@ -6,6 +6,10 @@
  */
 
 let cached: { apiUrl: string; wsUrl: string } | null = null;
+const LOCAL_DEV_SERVER_PORT = "8080";
+
+const isLoopbackHostname = (hostname: string) =>
+  hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0";
 
 function resolve(): { apiUrl: string; wsUrl: string } {
   if (cached) return cached;
@@ -16,8 +20,18 @@ function resolve(): { apiUrl: string; wsUrl: string } {
   if (envApi && envWs) {
     cached = { apiUrl: envApi, wsUrl: envWs };
   } else if (typeof window !== "undefined") {
-    const { protocol, host } = window.location;
+    const { protocol, host, hostname, port } = window.location;
     const isSecure = protocol === "https:";
+
+    if (process.env.NODE_ENV === "development" && port === "3000" && isLoopbackHostname(hostname)) {
+      const originHost = `${hostname}:${LOCAL_DEV_SERVER_PORT}`;
+      cached = {
+        apiUrl: `http://${originHost}`,
+        wsUrl: `ws://${originHost}/ws`,
+      };
+      return cached;
+    }
+
     cached = {
       apiUrl: `${protocol}//${host}`,
       wsUrl: `${isSecure ? "wss" : "ws"}://${host}/ws`,
@@ -36,4 +50,8 @@ export function getApiUrl(): string {
 
 export function getWsUrl(): string {
   return resolve().wsUrl;
+}
+
+export function resetResolvedUrlsForTests(): void {
+  cached = null;
 }

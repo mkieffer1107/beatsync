@@ -23,12 +23,22 @@ export const AudioSourceCollectionSchema = z.object({
 });
 export type AudioSourceCollectionType = z.infer<typeof AudioSourceCollectionSchema>;
 
+export const AudioSourceMetadataSchema = z.object({
+  sourceUrl: z.string().url().optional(),
+  providerTrackId: z.string().optional(),
+  youtubeVideoId: z.string().optional(),
+  durationSeconds: z.number().positive().optional(),
+});
+export type AudioSourceMetadataType = z.infer<typeof AudioSourceMetadataSchema>;
+
 export const AudioSourceSchema = z.object({
   url: z.string(),
   title: z.string().optional(),
   artworkUrl: z.string().url().optional(),
   originalUrl: z.string().url().optional(),
   sourceKind: z.enum(["upload", "provider", "youtube"]).optional(),
+  externalId: z.string().optional(),
+  metadata: AudioSourceMetadataSchema.optional(),
   collection: AudioSourceCollectionSchema.optional(),
 });
 export type AudioSourceType = z.infer<typeof AudioSourceSchema>;

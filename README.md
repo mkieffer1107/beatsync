@@ -20,15 +20,18 @@ https://github.com/user-attachments/assets/2aa385a7-2a07-4ab5-80b1-fda553efc57b
 
 This project uses [Turborepo](https://turbo.build/repo).
 
-Fill in the `.env` file in `apps/client` with the following:
+For explicit local client/server URLs, fill in the `.env` file in `apps/client` with:
 
 ```sh
 NEXT_PUBLIC_API_URL=http://localhost:8080
 NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws
 ```
 
-If you run Beatsync behind a reverse proxy on a single hostname, leave those two
-variables unset and the client will infer same-origin API and WebSocket URLs.
+If you leave those two variables unset:
+
+- local Next dev on `http://localhost:3000` will automatically talk to the Bun server on `http://localhost:8080`
+- reverse-proxy and LAN single-hostname setups will continue to use same-origin API and WebSocket URLs
+
 A sample LAN reverse proxy config is checked in at [`Caddyfile`](./Caddyfile).
 For a Pi-style single-hostname stack, use `bun run lan:dev` for development or
 `bun run lan:start` after building. Those scripts start the client, server, and

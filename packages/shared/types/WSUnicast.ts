@@ -27,6 +27,7 @@ export const ImportStatusSchema = z.object({
   importedCount: z.number().nonnegative().optional(),
   failedCount: z.number().nonnegative().optional(),
   collectionName: z.string().optional(),
+  playlistId: z.string().optional(),
 });
 export type ImportStatusType = z.infer<typeof ImportStatusSchema>;
 

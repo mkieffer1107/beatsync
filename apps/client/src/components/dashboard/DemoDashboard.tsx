@@ -51,7 +51,8 @@ const DemoTrackSelector = () => {
             key={source.source.url}
             onClick={() => {
               if (isSelected) return;
-              const { changeAudioSource, broadcastPlay, isPlaying } = useGlobalStore.getState();
+              const { changeAudioSource, broadcastPlay, isPlaying, setPlaybackContext } = useGlobalStore.getState();
+              setPlaybackContext(null);
               changeAudioSource(source.source.url);
               if (isPlaying) broadcastPlay(0);
             }}

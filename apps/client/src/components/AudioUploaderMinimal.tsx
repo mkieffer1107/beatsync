@@ -266,11 +266,11 @@ export const AudioUploaderMinimal = () => {
                         : "Import video"}
                   </button>
 
-                  <div className="text-[11px] text-neutral-500 truncate">
-                    {youtubeImportMode === "playlist"
-                      ? "Playlists queue every video as tracks."
-                      : "Single videos are added as one track."}
-                  </div>
+                  {youtubeImportMode === "playlist" ? (
+                    <div className="text-[11px] text-neutral-500 truncate">
+                      Playlists queue every video as tracks.
+                    </div>
+                  ) : null}
                 </div>
               </form>
             </motion.div>

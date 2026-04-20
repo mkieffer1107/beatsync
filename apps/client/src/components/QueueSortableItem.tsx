@@ -3,6 +3,7 @@ import {
   getAudioSourceCollectionLabel,
   getAudioSourceDisplayTitle,
 } from "@/lib/audioSourceDisplay";
+import { useResolvedAudioDuration } from "@/hooks/useResolvedAudioDuration";
 import { cn, formatTime } from "@/lib/utils";
 import { AudioSourceState, useGlobalStore } from "@/store/global";
 import { sendWSRequest } from "@/utils/ws";
@@ -48,12 +49,12 @@ export const QueueSortableItem = ({
   index: number;
   canMutate: boolean;
 }) => {
-  const getAudioDuration = useGlobalStore((state) => state.getAudioDuration);
   const selectedAudioUrl = useGlobalStore((state) => state.selectedAudioUrl);
   const changeAudioSource = useGlobalStore((state) => state.changeAudioSource);
   const broadcastPlay = useGlobalStore((state) => state.broadcastPlay);
   const broadcastPause = useGlobalStore((state) => state.broadcastPause);
   const isPlaying = useGlobalStore((state) => state.isPlaying);
+  const setPlaybackContext = useGlobalStore((state) => state.setPlaybackContext);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
   const style = {
@@ -69,6 +70,7 @@ export const QueueSortableItem = ({
   const artworkUrl = getAudioSourceArtworkUrl(sourceState.source);
   const collectionLabel = getAudioSourceCollectionLabel(sourceState.source);
   const secondaryLabel = collectionLabel && collectionLabel !== displayTitle ? collectionLabel : null;
+  const duration = useResolvedAudioDuration(sourceState.source);
 
   const handleItemClick = (sourceState: AudioSourceState) => {
     if (!canMutate) return;
@@ -91,6 +93,7 @@ export const QueueSortableItem = ({
         broadcastPlay();
       }
     } else {
+      setPlaybackContext(null);
       changeAudioSource(source.url);
       broadcastPlay(0);
     }
@@ -287,7 +290,7 @@ export const QueueSortableItem = ({
             exit={{ opacity: 0, scale: 0.98 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
           >
-            {!isLoading && sourceState.status === "loaded" && isSelected ? (
+            {!isLoading && duration > 0 ? (
               <motion.span
                 key="duration"
                 initial={{ opacity: 0, scale: 0.98 }}
@@ -295,7 +298,7 @@ export const QueueSortableItem = ({
                 exit={{ opacity: 0, scale: 0.98 }}
                 transition={{ duration: 0.3, ease: "easeOut" }}
               >
-                {formatTime(getAudioDuration({ url: sourceState.source.url }))}
+                {formatTime(duration)}
               </motion.span>
             ) : (
               <motion.span

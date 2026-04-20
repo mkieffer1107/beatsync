@@ -5,6 +5,8 @@ import { handleDeletePlaylist } from "@/websocket/handlers/handleDeletePlaylist"
 import { handleLoadDefaultTracks } from "@/websocket/handlers/handleLoadDefaultTracks";
 import { handleCreatePlaylist } from "@/websocket/handlers/handleCreatePlaylist";
 import { handleQueuePlaylist } from "@/websocket/handlers/handleQueuePlaylist";
+import { handleQueueTracks } from "@/websocket/handlers/handleQueueTracks";
+import { handleRefreshPlaylist } from "@/websocket/handlers/handleRefreshPlaylist";
 import { handleSearchMusic } from "@/websocket/handlers/handleSearchMusic";
 import { handleSendChatMessage } from "@/websocket/handlers/handleSendChatMessage";
 import { handleSendIp } from "@/websocket/handlers/handleSendIp";
@@ -123,6 +125,11 @@ export const WS_REGISTRY: WebsocketRegistry = {
     description: "Move playlist tracks to the front of the room queue",
   },
 
+  [ClientActionEnum.enum.QUEUE_TRACKS]: {
+    handle: handleQueueTracks,
+    description: "Add saved library tracks back into the room queue",
+  },
+
   [ClientActionEnum.enum.CREATE_PLAYLIST]: {
     handle: handleCreatePlaylist,
     description: "Create a playlist object in the room",
@@ -136,6 +143,11 @@ export const WS_REGISTRY: WebsocketRegistry = {
   [ClientActionEnum.enum.DELETE_PLAYLIST]: {
     handle: handleDeletePlaylist,
     description: "Delete a playlist object from the room",
+  },
+
+  [ClientActionEnum.enum.REFRESH_PLAYLIST]: {
+    handle: handleRefreshPlaylist,
+    description: "Refresh a playlist from its source",
   },
 
   [ClientActionEnum.enum.SET_PLAYLIST_TRACKS]: {

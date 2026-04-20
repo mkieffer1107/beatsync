@@ -25,6 +25,8 @@ export interface PlaylistLibraryItem {
   trackCount: number;
   origin: "derived" | "server";
   sourceKind: string | null;
+  originalUrl: string | null;
+  externalId: string | null;
   tracks: PlaylistTrack[];
 }
 
@@ -159,6 +161,8 @@ const finalizePlaylist = (
   draft: Omit<PlaylistLibraryItem, "trackCount" | "artworkUrl" | "sourceKind"> & {
     artworkUrl?: string | null;
     sourceKind?: string | null;
+    originalUrl?: string | null;
+    externalId?: string | null;
   }
 ): PlaylistLibraryItem => {
   const tracks = [...draft.tracks].sort((left, right) => {
@@ -175,6 +179,8 @@ const finalizePlaylist = (
     trackCount: tracks.length,
     artworkUrl: draft.artworkUrl ?? tracks.find((track) => track.artworkUrl)?.artworkUrl ?? null,
     sourceKind: draft.sourceKind ?? tracks.map((track) => getPlaylistSourceKind(track.source)).find(Boolean) ?? null,
+    originalUrl: draft.originalUrl ?? null,
+    externalId: draft.externalId ?? null,
   };
 };
 
@@ -222,6 +228,8 @@ export const derivePlaylistsFromAudioSources = (sources: AudioSourceType[]): Pla
         tracks: [nextTrack],
         artworkUrl: getAudioSourceArtworkUrl(source),
         sourceKind: getPlaylistSourceKind(source),
+        originalUrl: null,
+        externalId: readNestedString(asRecord(source), ["collection", "externalId"]),
       });
       return;
     }
@@ -297,6 +305,8 @@ export const normalizePlaylists = (playlists: unknown, sources: AudioSourceType[
         artworkUrl: readString(record.artworkUrl, record.thumbnailUrl, record.coverUrl),
         origin: "server",
         sourceKind: readString(record.sourceKind, record.kind, record.type),
+        originalUrl: readString(record.originalUrl),
+        externalId: readString(record.externalId),
         tracks,
       })
     );

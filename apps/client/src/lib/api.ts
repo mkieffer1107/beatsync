@@ -16,8 +16,39 @@ const baseAxios = axios.create({
   },
 });
 
+const readFileDuration = (file: File) =>
+  new Promise<number>((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const audio = new Audio();
+
+    const cleanup = () => {
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("error", handleError);
+      URL.revokeObjectURL(objectUrl);
+      audio.src = "";
+    };
+
+    const handleLoadedMetadata = () => {
+      const durationSeconds = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+      cleanup();
+      resolve(durationSeconds);
+    };
+
+    const handleError = () => {
+      cleanup();
+      resolve(0);
+    };
+
+    audio.preload = "metadata";
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("error", handleError);
+    audio.src = objectUrl;
+  });
+
 export const uploadAudioFile = async (data: { file: File; roomId: string }) => {
   try {
+    const durationSeconds = await readFileDuration(data.file);
+
     // Step 1: Get presigned upload URL from server
     const uploadUrlRequest: GetUploadUrlType = {
       roomId: data.roomId,
@@ -50,6 +81,7 @@ export const uploadAudioFile = async (data: { file: File; roomId: string }) => {
       roomId: data.roomId,
       originalName: data.file.name,
       publicUrl,
+      durationSeconds: durationSeconds > 0 ? durationSeconds : undefined,
     };
 
     await baseAxios.post<UploadCompleteResponseType>("/upload/complete", uploadCompleteRequest);

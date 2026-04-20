@@ -31,9 +31,11 @@ export const ClientActionEnum = z.enum([
   "STREAM_MUSIC", // Stream music
   "IMPORT_YOUTUBE", // Import a YouTube video or playlist
   "QUEUE_PLAYLIST", // Add an existing playlist back into the room queue
+  "QUEUE_TRACKS", // Add arbitrary saved tracks back into the room queue
   "CREATE_PLAYLIST", // Create a playlist object in the room
   "UPDATE_PLAYLIST", // Update playlist metadata
   "DELETE_PLAYLIST", // Delete a playlist object from the room
+  "REFRESH_PLAYLIST", // Refresh a playlist from its upstream source
   "SET_PLAYLIST_TRACKS", // Replace the ordered tracks in a playlist
   "SET_GLOBAL_VOLUME", // Set global volume for all clients
   "SEND_CHAT_MESSAGE", // Send a chat message,
@@ -148,6 +150,11 @@ export const QueuePlaylistSchema = z.object({
   playlistId: z.string().min(1),
 });
 
+export const QueueTracksSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.QUEUE_TRACKS),
+  urls: z.array(z.string()).min(1),
+});
+
 export const CreatePlaylistSchema = z.object({
   type: z.literal(ClientActionEnum.enum.CREATE_PLAYLIST),
   playlistId: z.string().min(1).optional(),
@@ -165,6 +172,11 @@ export const UpdatePlaylistSchema = z.object({
 export const DeletePlaylistSchema = z.object({
   type: z.literal(ClientActionEnum.enum.DELETE_PLAYLIST),
   playlistId: z.string(),
+});
+
+export const RefreshPlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.REFRESH_PLAYLIST),
+  playlistId: z.string().min(1),
 });
 
 export const SetPlaylistTracksSchema = z.object({
@@ -224,9 +236,11 @@ export const WSRequestSchema = z.discriminatedUnion("type", [
   StreamMusicSchema,
   ImportYoutubeSchema,
   QueuePlaylistSchema,
+  QueueTracksSchema,
   CreatePlaylistSchema,
   UpdatePlaylistSchema,
   DeletePlaylistSchema,
+  RefreshPlaylistSchema,
   SetPlaylistTracksSchema,
   SetGlobalVolumeSchema,
   SendChatMessageSchema,

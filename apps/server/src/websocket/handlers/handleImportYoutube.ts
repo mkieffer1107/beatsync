@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { IS_DEMO_MODE } from "@/demo";
-import { downloadYoutubeThumbnail, downloadYoutubeTrack, getYoutubeImportPlan } from "@/lib/youtube";
-import { generateAudioFileName, observePublicBaseUrl, uploadBytes } from "@/lib/r2";
+import { getYoutubeImportPlan } from "@/lib/youtube";
+import { buildYoutubeTrackExternalId, resolveYoutubeTrackForRoom } from "@/lib/youtubeRoomImport";
+import { observePublicBaseUrl } from "@/lib/r2";
 import { globalManager } from "@/managers";
 import { sendBroadcast, sendUnicast } from "@/utils/responses";
 import { requireCanMutate } from "@/websocket/middlewares";
@@ -75,7 +76,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
       }
     }
 
-    const tracks = plan.tracks.filter((track) => !room.hasActiveStreamJob(`youtube:${track.id}`));
+    const tracks = plan.tracks.filter((track) => !room.hasActiveStreamJob(buildYoutubeTrackExternalId(track.id)));
 
     if (tracks.length === 0) {
       sendUnicast({
@@ -91,7 +92,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
     }
 
     for (const track of tracks) {
-      room.addStreamJob(`youtube:${track.id}`);
+      room.addStreamJob(buildYoutubeTrackExternalId(track.id));
     }
 
     sendBroadcast({
@@ -121,11 +122,12 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
     let importedCount = 0;
     let failedCount = 0;
     let queueChanged = false;
+    let reusedCount = 0;
     const trackFailureMessages: string[] = [];
 
     for (let index = 0; index < tracks.length; index += 1) {
       const track = tracks[index];
-      const jobKey = `youtube:${track.id}`;
+      const jobKey = buildYoutubeTrackExternalId(track.id);
       const playlistCollection =
         playlistId && plan.title
           ? {
@@ -138,65 +140,28 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
           : undefined;
 
       try {
-        const existingTrack = room.findTrackByOriginalUrl(track.sourceUrl);
-        if (existingTrack) {
-          const resolvedTrack: AudioSourceType = playlistCollection
-            ? {
-                ...existingTrack,
-                collection: playlistCollection,
-              }
-            : existingTrack;
+        const { source, reusedExisting } = await resolveYoutubeTrackForRoom({
+          room,
+          roomId,
+          track,
+          collection: playlistCollection,
+        });
 
-          if (plan.kind === "playlist") {
-            playlistTracks.push(resolvedTrack);
-          }
-
-          const alreadyInQueue = room.getAudioSources().some((source) => source.url === existingTrack.url);
-          if (!alreadyInQueue) {
-            room.addAudioSource(resolvedTrack);
-            queueChanged = true;
-          }
-
-          importedCount += 1;
-          continue;
+        if (plan.kind === "playlist") {
+          playlistTracks.push(source);
         }
 
-        const download = await downloadYoutubeTrack(track);
-
-        try {
-          const audioBuffer = await Bun.file(download.filePath).arrayBuffer();
-          const audioFileName = generateAudioFileName(`${track.title}.mp3`);
-          const audioUrl = await uploadBytes(audioBuffer, roomId, audioFileName, "audio/mpeg");
-
-          let artworkUrl: string | undefined;
-
-          if (track.thumbnailUrl) {
-            const thumbnail = await downloadYoutubeThumbnail(track.thumbnailUrl);
-            if (thumbnail) {
-              const artworkFileName = generateAudioFileName(`${track.title}-art${thumbnail.extension}`);
-              artworkUrl = await uploadBytes(thumbnail.bytes, roomId, artworkFileName, thumbnail.contentType);
-            }
-          }
-
-          const nextSource: AudioSourceType = {
-            url: audioUrl,
-            title: track.title,
-            artworkUrl,
-            originalUrl: track.sourceUrl,
-            sourceKind: "youtube",
-            collection: playlistCollection,
-          };
-
-          if (plan.kind === "playlist") {
-            playlistTracks.push(nextSource);
-          }
-
-          room.addAudioSource(nextSource);
+        const alreadyInQueue = room.getAudioSources().some((audioSource) => audioSource.url === source.url);
+        if (!alreadyInQueue) {
+          room.addAudioSource(source);
           queueChanged = true;
-          importedCount += 1;
-        } finally {
-          await download.cleanup();
         }
+
+        if (reusedExisting) {
+          reusedCount += 1;
+        }
+
+        importedCount += 1;
       } catch (error) {
         failedCount += 1;
         if (error instanceof Error && error.message.trim()) {
@@ -264,6 +229,10 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
         message:
           plan.kind === "playlist"
             ? `Imported ${importedCount} track${importedCount === 1 ? "" : "s"} into "${plan.title ?? "playlist"}"`
+            : reusedCount > 0 && !queueChanged
+              ? `"${tracks[0]?.title ?? "YouTube video"}" is already downloaded`
+              : reusedCount > 0
+                ? `Queued "${tracks[0]?.title ?? "YouTube video"}" from your library`
             : importedCount > 0
               ? `Imported "${tracks[0]?.title ?? "YouTube video"}"`
               : trackFailureMessages[0] ?? "Failed to import the YouTube media",

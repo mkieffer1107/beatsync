@@ -1,274 +1,156 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { useMemo } from "react";
+
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { cn } from "@/lib/utils";
+import {
+  getAudioSourceArtworkUrl,
+  getAudioSourceCollectionLabel,
+  getAudioSourceDisplayTitle,
+} from "@/lib/audioSourceDisplay";
+import { cn, formatTime } from "@/lib/utils";
 import { useGlobalStore } from "@/store/global";
-import { sendWSRequest } from "@/utils/ws";
-import { ClientActionEnum, TrackType } from "@beatsync/shared";
-import { Plus } from "lucide-react";
+import { Disc3, Play, Radio } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useRef } from "react";
-import { toast } from "sonner";
 
 interface SearchResultsProps {
+  query: string;
   className?: string;
   onTrackSelect?: () => void;
 }
 
-export function SearchResults({ className, onTrackSelect }: SearchResultsProps) {
+interface SearchMatch {
+  url: string;
+  title: string;
+  collectionLabel: string | null;
+  artworkUrl: string | null;
+  queueIndex: number;
+  isSelected: boolean;
+  duration: number;
+  score: number;
+}
+
+const normalizeSearchValue = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+
+const FALLBACK_ARTWORK =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'%3E%3Crect width='80' height='80' rx='12' fill='%23171717'/%3E%3Ccircle cx='40' cy='40' r='18' fill='none' stroke='%23525252' stroke-width='4'/%3E%3Ccircle cx='40' cy='40' r='4' fill='%23525252'/%3E%3C/svg%3E";
+
+const SearchResultArtwork = ({ src, alt }: { src: string | null; alt: string }) => {
+  if (!src) {
+    return (
+      <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-md border border-neutral-800/80 bg-neutral-900/70">
+        <Disc3 className="size-4 text-neutral-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="size-10 flex-shrink-0 overflow-hidden rounded-md border border-neutral-800/80 bg-neutral-900/70">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        className="h-full w-full object-cover"
+        onError={(event) => {
+          event.currentTarget.onerror = null;
+          event.currentTarget.src = FALLBACK_ARTWORK;
+        }}
+      />
+    </div>
+  );
+};
+
+export function SearchResults({ query, className, onTrackSelect }: SearchResultsProps) {
   const isMobile = useIsMobile();
-  const searchResults = useGlobalStore((state) => state.searchResults);
-  const isSearching = useGlobalStore((state) => state.isSearching);
+  const audioSources = useGlobalStore((state) => state.audioSources);
+  const selectedAudioUrl = useGlobalStore((state) => state.selectedAudioUrl);
+  const isPlaying = useGlobalStore((state) => state.isPlaying);
+  const changeAudioSource = useGlobalStore((state) => state.changeAudioSource);
+  const broadcastPlay = useGlobalStore((state) => state.broadcastPlay);
+  const setPlaybackContext = useGlobalStore((state) => state.setPlaybackContext);
+  const getAudioDuration = useGlobalStore((state) => state.getAudioDuration);
 
-  // Track which tracks are currently being streamed to prevent duplicates
-  const streamingTracksRef = useRef<Set<number>>(new Set());
-  const isLoadingMoreResults = useGlobalStore((state) => state.isLoadingMoreResults);
-  const hasMoreResults = useGlobalStore((state) => state.hasMoreResults);
-  const searchQuery = useGlobalStore((state) => state.searchQuery);
-  const socket = useGlobalStore((state) => state.socket);
-  const loadMoreSearchResults = useGlobalStore((state) => state.loadMoreSearchResults);
+  const normalizedQuery = normalizeSearchValue(query);
 
-  // Helper function to format track name as "Artist 1, Artist 2 - Title (Version)"
-  const formatTrackName = (track: TrackType) => {
-    const artists: string[] = [];
-
-    // Add main performer
-    if (track.performer?.name) {
-      artists.push(track.performer.name);
+  const matches = useMemo<SearchMatch[]>(() => {
+    if (!normalizedQuery) {
+      return [];
     }
 
-    // Add album artists if different from performer
-    if (track.album?.artists) {
-      track.album.artists.forEach((artist) => {
-        if (artist.name && !artists.includes(artist.name)) {
-          artists.push(artist.name);
+    const tokens = normalizedQuery.split(" ").filter(Boolean);
+
+    return audioSources
+      .map((audioSourceState, queueIndex) => {
+        const source = audioSourceState.source;
+        const title = getAudioSourceDisplayTitle(source);
+        const collectionLabel = getAudioSourceCollectionLabel(source);
+        const normalizedTitle = normalizeSearchValue(title);
+        const normalizedCollectionLabel = collectionLabel ? normalizeSearchValue(collectionLabel) : "";
+        const searchValue = normalizeSearchValue(
+          [title, collectionLabel, source.title, source.originalUrl, source.url].filter(Boolean).join(" ")
+        );
+
+        if (!tokens.every((token) => searchValue.includes(token))) {
+          return null;
         }
+
+        let score = 0;
+        if (normalizedTitle === normalizedQuery) {
+          score += 6;
+        }
+        if (normalizedTitle.startsWith(normalizedQuery)) {
+          score += 4;
+        } else if (normalizedTitle.includes(normalizedQuery)) {
+          score += 2;
+        }
+        if (normalizedCollectionLabel && normalizedCollectionLabel.includes(normalizedQuery)) {
+          score += 1;
+        }
+
+        return {
+          url: source.url,
+          title,
+          collectionLabel,
+          artworkUrl: getAudioSourceArtworkUrl(source),
+          queueIndex,
+          isSelected: source.url === selectedAudioUrl,
+          duration: getAudioDuration({ url: source.url }),
+          score,
+        };
+      })
+      .filter((match): match is SearchMatch => Boolean(match))
+      .sort((left, right) => {
+        if (right.score !== left.score) {
+          return right.score - left.score;
+        }
+
+        if (left.isSelected !== right.isSelected) {
+          return Number(right.isSelected) - Number(left.isSelected);
+        }
+
+        if (left.queueIndex !== right.queueIndex) {
+          return left.queueIndex - right.queueIndex;
+        }
+
+        return left.title.localeCompare(right.title);
       });
+  }, [audioSources, getAudioDuration, normalizedQuery, selectedAudioUrl]);
+
+  const handleSelectTrack = (url: string) => {
+    const isCurrentTrack = selectedAudioUrl === url;
+
+    if (!isCurrentTrack) {
+      setPlaybackContext(null);
+      changeAudioSource(url);
+      broadcastPlay(0);
+    } else if (!isPlaying) {
+      broadcastPlay(0);
     }
 
-    const artistStr = artists.length > 0 ? artists.join(", ") : "Unknown Artist";
-
-    // Trim whitespace from title and include version if present
-    const title = (track.title || "Unknown Title").trim();
-    const version = track.version?.trim();
-
-    const fullTitle = version ? `${title} (${version})` : title;
-
-    return `${artistStr} - ${fullTitle}`;
+    onTrackSelect?.();
   };
 
-  const handleAddTrack = async (track: TrackType) => {
-    if (!socket) {
-      toast.error("Not connected to server");
-      return;
-    }
-
-    // Check if this track is already being streamed
-    if (streamingTracksRef.current.has(track.id)) {
-      console.log(`Track ${track.id} is already being streamed, skipping duplicate request`);
-      return; // Silently ignore duplicate requests
-    }
-
-    try {
-      const formattedTrackName = formatTrackName(track);
-
-      // Mark this track as being streamed
-      streamingTracksRef.current.add(track.id);
-
-      // Remove from tracking set after a delay (3 seconds should be enough for the request to complete)
-      setTimeout(() => {
-        streamingTracksRef.current.delete(track.id);
-      }, 3000);
-
-      // Request stream URL for this track
-      sendWSRequest({
-        ws: socket,
-        request: {
-          type: ClientActionEnum.enum.STREAM_MUSIC,
-          trackId: track.id,
-          trackName: formattedTrackName,
-        },
-      });
-
-      // Call the callback to handle UI dismissal
-      onTrackSelect?.();
-
-      // toast.success(`Adding "${formattedTrackName}" to queue...`);
-    } catch (error) {
-      console.error("Failed to add track:", error);
-      toast.error("Failed to add track to queue");
-      // Remove from tracking set on error
-      streamingTracksRef.current.delete(track.id);
-    }
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  if (isSearching) {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="flex flex-col items-center justify-center py-8"
-      >
-        <div className="size-6 mb-4 relative">
-          <svg className="w-full h-full" viewBox="0 0 100 100">
-            {/* Background circle */}
-            <circle
-              cx="50"
-              cy="50"
-              r="42"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="6"
-              className="text-neutral-800"
-            />
-
-            {/* Animated progress circle */}
-            <motion.circle
-              cx="50"
-              cy="50"
-              r="42"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="6"
-              strokeLinecap="round"
-              className="text-white"
-              strokeDasharray={2 * Math.PI * 42}
-              animate={{
-                strokeDashoffset: [2 * Math.PI * 42, 0],
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: "linear",
-              }}
-              style={{
-                transformOrigin: "center",
-                transform: "rotate(-90deg)",
-              }}
-            />
-          </svg>
-        </div>
-
-        <motion.h3
-          className="text-base font-medium tracking-tight mb-1 text-white"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, delay: 0.1 }}
-        >
-          Searching for music...
-        </motion.h3>
-
-        <motion.p
-          className="text-neutral-400 text-center text-xs"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, delay: 0.15 }}
-        >
-          Finding tracks that match your query
-        </motion.p>
-      </motion.div>
-    );
-  }
-
-  // Handle error state
-  if (searchResults && searchResults.type === "error") {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="flex flex-col items-center justify-center py-8"
-      >
-        <motion.h3
-          className="text-base font-medium tracking-tight mb-1"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, delay: 0.1 }}
-        >
-          💀
-        </motion.h3>
-
-        <motion.p
-          className="text-neutral-400 text-center text-xs"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3, delay: 0.15 }}
-        >
-          {searchResults.message}
-        </motion.p>
-      </motion.div>
-    );
-  }
-
-  if (!searchResults || (searchResults.type === "success" && !searchResults.response.data.tracks.items.length)) {
-    if (searchQuery) {
-      return (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex flex-col items-center justify-center py-8"
-        >
-          <div className="size-6 mb-4 relative">
-            <svg className="w-full h-full" viewBox="0 0 100 100">
-              {/* Background circle */}
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="6"
-                className="text-neutral-800"
-              />
-
-              {/* Static circle (no animation for no results) */}
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="6"
-                strokeLinecap="round"
-                className="text-neutral-600"
-                strokeDasharray={2 * Math.PI * 42}
-                strokeDashoffset={2 * Math.PI * 42 * 0.75}
-                style={{
-                  transformOrigin: "center",
-                  transform: "rotate(-90deg)",
-                }}
-              />
-            </svg>
-          </div>
-
-          <motion.h3
-            className="text-base font-medium tracking-tight mb-1 text-white"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3, delay: 0.1 }}
-          >
-            No results found
-          </motion.h3>
-
-          <motion.p
-            className="text-neutral-400 text-center text-xs"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3, delay: 0.15 }}
-          >
-            Try searching for a different artist, song, or album
-          </motion.p>
-        </motion.div>
-      );
-    }
-
-    // Show initial state when no search has been performed
+  if (!normalizedQuery) {
     return (
       <motion.div
         initial={{ opacity: 0 }}
@@ -281,7 +163,7 @@ export function SearchResults({ className, onTrackSelect }: SearchResultsProps) 
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.1 }}
         >
-          Start typing to search for music...
+          Start typing to search your downloads
         </motion.h3>
 
         <motion.p
@@ -290,136 +172,102 @@ export function SearchResults({ className, onTrackSelect }: SearchResultsProps) 
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3, delay: 0.15 }}
         >
-          Experimental. Free while in beta.
+          Search the tracks already loaded into this room
         </motion.p>
       </motion.div>
     );
   }
 
-  const tracks = searchResults.type === "success" ? searchResults.response.data.tracks.items : [];
+  if (matches.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="flex flex-col items-center justify-center py-8"
+      >
+        <motion.h3
+          className="text-base font-medium tracking-tight mb-1 text-white"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+        >
+          No downloaded tracks found
+        </motion.h3>
+
+        <motion.p
+          className="text-neutral-400 text-center text-xs"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+        >
+          Try a different title, filename, or playlist name
+        </motion.p>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={cn(isMobile && "max-h-[40vh]", className)}>
       <AnimatePresence>
         <div className="space-y-1">
-          {tracks.map((track, index) => (
-            <motion.div
-              key={track.id}
-              initial={{
-                opacity: 0,
-                filter: "blur(8px)",
-              }}
-              animate={{
-                opacity: 1,
-                filter: "blur(0px)",
-              }}
-              exit={{
-                opacity: 0,
-                filter: "blur(4px)",
-              }}
-              transition={{
-                duration: 0.3,
-                delay: index * 0.06,
-                ease: "easeInOut",
-              }}
-              className="group hover:bg-neutral-800 px-3 py-2 transition-all duration-200 cursor-pointer flex items-center gap-3 rounded-md"
-              onClick={() => handleAddTrack(track)}
-            >
-              {/* Album Art */}
-              <div className="relative flex-shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element -- external album art URLs with onError fallback, not compatible with next/image */}
-                <img
-                  src={track.album.image.thumbnail || track.album.image.small}
-                  alt={track.album.title}
-                  // width={40}
-                  // height={40}
-                  className="w-10 h-10 rounded object-cover bg-neutral-800"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23404040'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' fill='%23888' font-size='14'%3E♪%3C/text%3E%3C/svg%3E";
-                  }}
-                />
-              </div>
+          {matches.map((track, index) => {
+            const metadataLabel = [track.collectionLabel, `Queue slot ${track.queueIndex + 1}`].filter(Boolean).join(" • ");
 
-              {/* Track Info */}
-              <div className="flex-1 min-w-0">
-                <h4 className="font-normal text-white truncate text-sm">
-                  {track.title}
-                  {track.version && <span className="text-neutral-500 ml-1">({track.version})</span>}
-                </h4>
-                <p className="text-xs text-neutral-400 truncate">{track.performer.name}</p>
-              </div>
-
-              {/* Duration */}
-              <div className="text-xs text-neutral-500 group-hover:text-neutral-400 transition-colors">
-                {formatTime(track.duration)}
-              </div>
-
-              {/* Add Button (visual only - parent handles click) */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none"
+            return (
+              <motion.button
+                key={track.url}
+                type="button"
+                initial={{
+                  opacity: 0,
+                  filter: "blur(8px)",
+                }}
+                animate={{
+                  opacity: 1,
+                  filter: "blur(0px)",
+                }}
+                exit={{
+                  opacity: 0,
+                  filter: "blur(4px)",
+                }}
+                transition={{
+                  duration: 0.3,
+                  delay: index * 0.04,
+                  ease: "easeInOut",
+                }}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => handleSelectTrack(track.url)}
+                className={cn(
+                  "group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-all duration-200",
+                  "hover:bg-neutral-800",
+                  track.isSelected ? "bg-white/[0.04]" : null
+                )}
               >
-                <Plus className="h-3 w-3" />
-              </Button>
-            </motion.div>
-          ))}
+                <SearchResultArtwork src={track.artworkUrl} alt={track.title} />
+
+                <div className="min-w-0 flex-1">
+                  <h4 className={cn("truncate text-sm font-normal", track.isSelected ? "text-primary-400" : "text-white")}>
+                    {track.title}
+                  </h4>
+                  <p className="truncate text-xs text-neutral-400">{metadataLabel}</p>
+                </div>
+
+                <div className="flex min-w-[4.5rem] items-center justify-end gap-2 text-xs text-neutral-500">
+                  {track.isSelected ? (
+                    isPlaying ? (
+                      <Radio className="size-3.5 text-primary-400" />
+                    ) : (
+                      <Play className="size-3.5 text-primary-400" />
+                    )
+                  ) : null}
+                  <span>{track.duration > 0 ? formatTime(track.duration) : `#${track.queueIndex + 1}`}</span>
+                </div>
+              </motion.button>
+            );
+          })}
         </div>
       </AnimatePresence>
-
-      {/* Load More (if there are more results) */}
-      {hasMoreResults && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="my-2 px-3">
-          <Button
-            variant="ghost"
-            onMouseDown={(e) => {
-              e.preventDefault(); // Prevent focus from leaving the input
-              // We need this so we can have the proper onblur events occur later
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              loadMoreSearchResults();
-            }}
-            disabled={isLoadingMoreResults}
-            className="w-full justify-center text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-all duration-200 h-8 text-xs font-normal cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoadingMoreResults ? (
-              <div className="flex items-center justify-center gap-2">
-                <div className="size-3 relative flex items-center justify-center">
-                  <svg className="w-full h-full" viewBox="0 0 100 100">
-                    <motion.circle
-                      cx="50"
-                      cy="50"
-                      r="35"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                      className="text-neutral-400"
-                      strokeDasharray={2 * Math.PI * 35 * 0.25}
-                      animate={{
-                        rotate: [0, 360],
-                      }}
-                      transition={{
-                        duration: 1.5,
-                        repeat: Infinity,
-                        ease: "linear",
-                      }}
-                      style={{
-                        transformOrigin: "center",
-                      }}
-                    />
-                  </svg>
-                </div>
-                <span>Loading more...</span>
-              </div>
-            ) : (
-              "Show more results"
-            )}
-          </Button>
-        </motion.div>
-      )}
     </motion.div>
   );
 }

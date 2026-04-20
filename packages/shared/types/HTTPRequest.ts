@@ -35,6 +35,7 @@ export const UploadCompleteSchema = z.object({
   roomId: z.string(),
   originalName: z.string(),
   publicUrl: z.string().url(),
+  durationSeconds: z.number().positive().optional(),
 });
 export type UploadCompleteType = z.infer<typeof UploadCompleteSchema>;
 

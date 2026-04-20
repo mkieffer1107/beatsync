@@ -2,7 +2,7 @@ import { IS_DEMO_MODE } from "@/demo";
 import { generateAudioFileName, observePublicBaseUrl, uploadBytes } from "@/lib/r2";
 import { globalManager } from "@/managers";
 import { MUSIC_PROVIDER_MANAGER } from "@/managers/MusicProviderManager";
-import { sendBroadcast } from "@/utils/responses";
+import { sendBroadcast, sendUnicast } from "@/utils/responses";
 import type { HandlerFunction } from "@/websocket/types";
 import type { ExtractWSRequestFrom } from "@beatsync/shared";
 
@@ -22,9 +22,41 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
   }
   room.cancelCleanup();
   observePublicBaseUrl(ws.data.serverOrigin);
+  const externalId = `provider:${message.trackId}`;
+  const displayName = message.trackName ?? `track-${message.trackId}`;
+
+  const existingTrack = room.findTrackByExternalId(externalId);
+  if (existingTrack) {
+    const alreadyInQueue = room.getAudioSources().some((source) => source.url === existingTrack.url);
+
+    if (!alreadyInQueue) {
+      const sources = room.addAudioSource(existingTrack);
+      sendBroadcast({
+        server,
+        roomId,
+        message: {
+          type: "ROOM_EVENT",
+          event: {
+            type: "SET_AUDIO_SOURCES",
+            sources,
+          },
+        },
+      });
+    }
+
+    sendUnicast({
+      ws,
+      message: {
+        type: "IMPORT_STATUS",
+        status: "completed",
+        message: alreadyInQueue ? `"${displayName}" is already downloaded` : `Queued "${displayName}" from your library`,
+      },
+    });
+    return;
+  }
 
   // Check if this track is already being streamed
-  const trackId = message.trackId.toString();
+  const trackId = externalId;
   if (room.hasActiveStreamJob(trackId)) {
     console.log(`Track ${trackId} is already being streamed for room ${roomId}, ignoring duplicate request`);
     return;
@@ -52,14 +84,12 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
     const streamUrl = streamResponse.data.url;
 
     // Use provided track name or fallback to track ID
-    const originalName = message.trackName ?? `track-${message.trackId}`;
-
     // Download the audio file
     console.log(`Downloading audio from: ${streamUrl}`);
     const response = await fetch(streamUrl);
 
     // Generate a unique filename for storage
-    const fileName = generateAudioFileName(`${originalName}.mp3`);
+    const fileName = generateAudioFileName(`${displayName}.mp3`);
 
     if (!response.ok) {
       throw new Error(`Failed to download audio: ${response.status}`);
@@ -78,9 +108,13 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
     // Add the audio source to the room and get updated sources list
     const sources = room.addAudioSource({
       url: r2Url,
-      title: originalName,
+      title: displayName,
       originalUrl: streamUrl,
       sourceKind: "provider",
+      externalId,
+      metadata: {
+        providerTrackId: message.trackId.toString(),
+      },
     });
 
     console.log(`Successfully uploaded track: ${r2Url}`);
@@ -98,8 +132,24 @@ export const handleStreamMusic: HandlerFunction<ExtractWSRequestFrom["STREAM_MUS
         },
       },
     });
+    sendUnicast({
+      ws,
+      message: {
+        type: "IMPORT_STATUS",
+        status: "completed",
+        message: `Imported "${displayName}"`,
+      },
+    });
   } catch (error) {
     console.error("Error in handleStreamMusic:", error);
+    sendUnicast({
+      ws,
+      message: {
+        type: "IMPORT_STATUS",
+        status: "error",
+        message: error instanceof Error ? error.message : `Failed to import "${displayName}"`,
+      },
+    });
   } finally {
     // Job completed or failed - remove from tracking and notify clients
     room.removeStreamJob(trackId);
