@@ -32,7 +32,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
   room.cancelCleanup();
 
   try {
-    const plan = await getYoutubeImportPlan(message.url);
+    const plan = await getYoutubeImportPlan(message.url, message.mode ?? "video");
 
     if (plan.kind === "playlist" && plan.playlistId) {
       const existingPlaylist = room.findPlaylistBySource({

@@ -34,6 +34,8 @@ export interface YoutubeImportTrack {
   durationSeconds?: number;
 }
 
+export type YoutubeImportMode = "video" | "playlist";
+
 export interface YoutubeImportPlan {
   kind: "single" | "playlist";
   title?: string;
@@ -366,24 +368,19 @@ function toTrack(entry: YoutubeFlatEntry): YoutubeImportTrack | null {
   };
 }
 
-export async function getYoutubeImportPlan(url: string): Promise<YoutubeImportPlan> {
-  if (!isYoutubeUrl(url)) {
-    throw new Error("Only YouTube URLs are supported");
-  }
+export const getYoutubeMetadataArgs = (mode: YoutubeImportMode) => [
+  "--dump-single-json",
+  ...(mode === "playlist" ? ["--flat-playlist"] : ["--no-playlist"]),
+  "--no-warnings",
+  ...getYoutubeCookieArgs(),
+  ...getYoutubeExtraArgs(),
+];
 
-  const ytDlpBinary = await resolveYtDlpBinary();
-  const raw = await runCommand(ytDlpBinary.command, [
-    "--dump-single-json",
-    "--flat-playlist",
-    "--no-warnings",
-    ...getYoutubeCookieArgs(),
-    ...getYoutubeExtraArgs(),
-    url,
-  ]);
-
-  const metadata = JSON.parse(raw) as YoutubeMetadata;
-
-  if (Array.isArray(metadata.entries) && metadata.entries.length > 0) {
+export function buildYoutubeImportPlanFromMetadata(
+  metadata: YoutubeMetadata,
+  mode: YoutubeImportMode = "video"
+): YoutubeImportPlan {
+  if (mode === "playlist" && Array.isArray(metadata.entries) && metadata.entries.length > 0) {
     const tracks = metadata.entries
       .map((entry) => toTrack(entry))
       .filter((track): track is YoutubeImportTrack => track !== null);
@@ -396,16 +393,31 @@ export async function getYoutubeImportPlan(url: string): Promise<YoutubeImportPl
     };
   }
 
-  const singleTrack = toTrack(metadata);
+  const singleTrack =
+    toTrack(metadata) ??
+    metadata.entries?.map((entry) => toTrack(entry)).find((track): track is YoutubeImportTrack => track !== null);
+
   if (!singleTrack) {
     throw new Error("Could not extract YouTube video information");
   }
 
   return {
     kind: "single",
-    title: metadata.title?.trim(),
+    title: singleTrack.title,
     tracks: [singleTrack],
   };
+}
+
+export async function getYoutubeImportPlan(url: string, mode: YoutubeImportMode = "video"): Promise<YoutubeImportPlan> {
+  if (!isYoutubeUrl(url)) {
+    throw new Error("Only YouTube URLs are supported");
+  }
+
+  const ytDlpBinary = await resolveYtDlpBinary();
+  const raw = await runCommand(ytDlpBinary.command, [...getYoutubeMetadataArgs(mode), url]);
+
+  const metadata = JSON.parse(raw) as YoutubeMetadata;
+  return buildYoutubeImportPlanFromMetadata(metadata, mode);
 }
 
 function getDownloadedFilePath(stdout: string): string {

@@ -70,7 +70,7 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
   }
 
   try {
-    const plan = await getYoutubeImportPlan(refreshUrl);
+    const plan = await getYoutubeImportPlan(refreshUrl, "playlist");
     if (plan.kind !== "playlist") {
       throw new Error("That URL no longer resolves to a YouTube playlist");
     }
@@ -149,7 +149,7 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
     let reusedCount = 0;
     const trackFailureMessages: string[] = [];
     const basePosition = playlist.tracks.length;
-    const nextCollectionName = plan.title?.trim() || playlist.name;
+    const nextCollectionName = plan.title?.trim() ?? playlist.name;
     const nextPlaylistExternalId = plan.playlistId ?? playlist.externalId;
 
     for (let index = 0; index < tracksToImport.length; index += 1) {
