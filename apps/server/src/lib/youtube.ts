@@ -48,6 +48,11 @@ export interface DownloadedYoutubeTrack {
   filePath: string;
 }
 
+interface ResolvedYoutubeImportRequest {
+  url: string;
+  mode: YoutubeImportMode;
+}
+
 interface ResolvedYtDlpBinary {
   command: string;
   version: string | null;
@@ -102,6 +107,49 @@ function runCommand(command: string, args: string[], options?: { cwd?: string })
       reject(new Error(`${command} failed: ${details}`));
     });
   });
+}
+
+function getYoutubeVideoId(url: URL): string | null {
+  if (url.hostname === "youtu.be") {
+    const videoId = url.pathname.split("/").filter(Boolean)[0]?.trim();
+    return videoId || null;
+  }
+
+  if (url.pathname === "/watch") {
+    const videoId = url.searchParams.get("v")?.trim();
+    return videoId || null;
+  }
+
+  return null;
+}
+
+function isGeneratedYoutubeRadioUrl(url: URL): boolean {
+  return url.searchParams.get("start_radio")?.trim() === "1" && getYoutubeVideoId(url) !== null;
+}
+
+export function resolveYoutubeImportRequest(
+  url: string,
+  mode: YoutubeImportMode = "video"
+): ResolvedYoutubeImportRequest {
+  if (!isYoutubeUrl(url)) {
+    throw new Error("Only YouTube URLs are supported");
+  }
+
+  const parsedUrl = new URL(url);
+
+  if (!isGeneratedYoutubeRadioUrl(parsedUrl)) {
+    return { url, mode };
+  }
+
+  const videoId = getYoutubeVideoId(parsedUrl);
+  if (!videoId) {
+    return { url, mode };
+  }
+
+  return {
+    url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+    mode: "video",
+  };
 }
 
 function parseYtDlpVersion(version: string): number[] | null {
@@ -409,15 +457,12 @@ export function buildYoutubeImportPlanFromMetadata(
 }
 
 export async function getYoutubeImportPlan(url: string, mode: YoutubeImportMode = "video"): Promise<YoutubeImportPlan> {
-  if (!isYoutubeUrl(url)) {
-    throw new Error("Only YouTube URLs are supported");
-  }
-
+  const request = resolveYoutubeImportRequest(url, mode);
   const ytDlpBinary = await resolveYtDlpBinary();
-  const raw = await runCommand(ytDlpBinary.command, [...getYoutubeMetadataArgs(mode), url]);
+  const raw = await runCommand(ytDlpBinary.command, [...getYoutubeMetadataArgs(request.mode), request.url]);
 
   const metadata = JSON.parse(raw) as YoutubeMetadata;
-  return buildYoutubeImportPlanFromMetadata(metadata, mode);
+  return buildYoutubeImportPlanFromMetadata(metadata, request.mode);
 }
 
 function getDownloadedFilePath(stdout: string): string {

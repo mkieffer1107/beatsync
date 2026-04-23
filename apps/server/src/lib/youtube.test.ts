@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildYoutubeImportPlanFromMetadata, getYoutubeMetadataArgs } from "@/lib/youtube";
+import { buildYoutubeImportPlanFromMetadata, getYoutubeMetadataArgs, resolveYoutubeImportRequest } from "@/lib/youtube";
 
 describe("youtube import planning", () => {
   it("uses no-playlist metadata args for single-video imports", () => {
@@ -14,6 +14,36 @@ describe("youtube import planning", () => {
 
     expect(args).toContain("--flat-playlist");
     expect(args).not.toContain("--no-playlist");
+  });
+
+  it("sanitizes generated radio URLs to a single-video import", () => {
+    const request = resolveYoutubeImportRequest(
+      "https://www.youtube.com/watch?v=CVxMTl6cUSE&list=RDCVxMTl6cUSE&start_radio=1",
+      "playlist"
+    );
+
+    expect(request).toEqual({
+      url: "https://www.youtube.com/watch?v=CVxMTl6cUSE",
+      mode: "video",
+    });
+  });
+
+  it("keeps real playlist URLs in playlist mode", () => {
+    const request = resolveYoutubeImportRequest("https://www.youtube.com/playlist?list=PL123456789", "playlist");
+
+    expect(request).toEqual({
+      url: "https://www.youtube.com/playlist?list=PL123456789",
+      mode: "playlist",
+    });
+  });
+
+  it("does not downgrade non-radio watch URLs that include a playlist id", () => {
+    const request = resolveYoutubeImportRequest("https://www.youtube.com/watch?v=video-123&list=PL123456789", "playlist");
+
+    expect(request).toEqual({
+      url: "https://www.youtube.com/watch?v=video-123&list=PL123456789",
+      mode: "playlist",
+    });
   });
 
   it("does not expand playlist-like metadata when video mode is requested", () => {
