@@ -73,6 +73,36 @@ describe("Playlist State", () => {
     ]);
   });
 
+  it("clears the live queue without deleting playlist-backed tracks", () => {
+    const room = globalManager.getOrCreateRoom("playlist-clear-room");
+    room.addAudioSource({ url: "https://example.com/alpha.mp3" });
+    room.addAudioSource({ url: "https://example.com/beta.mp3" });
+
+    const playlist = room.createPlaylist({
+      name: "Set A",
+      trackUrls: ["https://example.com/alpha.mp3", "https://example.com/beta.mp3"],
+    });
+
+    room.updatePlaybackSchedulePlay(
+      { type: "PLAY", audioSource: "https://example.com/alpha.mp3", trackTimeSeconds: 3 },
+      Date.now()
+    );
+
+    const cleared = room.clearAudioQueue();
+
+    expect(cleared).toEqual([]);
+    expect(room.getAudioSources()).toEqual([]);
+    expect(room.getPlaybackState().type).toBe("paused");
+    expect(room.getPlaylists()[0]?.id).toBe(playlist.id);
+    expect(room.getPlaylists()[0]?.trackUrls).toEqual([
+      "https://example.com/alpha.mp3",
+      "https://example.com/beta.mp3",
+    ]);
+
+    const queued = room.queuePlaylist(playlist.id);
+    expect(queued?.addedCount).toBe(2);
+  });
+
   it("finds existing tracks by external id across queue and playlist storage", () => {
     const room = globalManager.getOrCreateRoom("playlist-external-id-room");
     room.addAudioSource({

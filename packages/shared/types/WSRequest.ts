@@ -26,6 +26,7 @@ export const ClientActionEnum = z.enum([
   "SET_PLAYBACK_CONTROLS", // Set playback controls
   "SEND_IP", // Send IP to server
   "LOAD_DEFAULT_TRACKS", // Load default tracks into empty queue
+  "CLEAR_AUDIO_QUEUE", // Clear the room queue without deleting stored tracks
   "DELETE_AUDIO_SOURCES", // Delete audio sources from the room queue (non-default only)
   "SEARCH_MUSIC", // Search for music
   "STREAM_MUSIC", // Stream music
@@ -101,6 +102,10 @@ export type ClientRequestSyncType = z.infer<typeof ClientRequestSyncSchema>;
 
 const LoadDefaultTracksSchema = z.object({
   type: z.literal(ClientActionEnum.enum.LOAD_DEFAULT_TRACKS),
+});
+
+const ClearAudioQueueSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.CLEAR_AUDIO_QUEUE),
 });
 
 const DeleteAudioSourcesSchema = z.object({
@@ -231,6 +236,7 @@ export const WSRequestSchema = z.discriminatedUnion("type", [
   SetPlaybackControlsSchema,
   SendLocationSchema,
   LoadDefaultTracksSchema,
+  ClearAudioQueueSchema,
   DeleteAudioSourcesSchema,
   SearchMusicSchema,
   StreamMusicSchema,

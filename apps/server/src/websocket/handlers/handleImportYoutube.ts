@@ -31,6 +31,20 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
   observePublicBaseUrl(ws.data.serverOrigin);
   room.cancelCleanup();
 
+  const broadcastAudioSources = () => {
+    sendBroadcast({
+      server,
+      roomId,
+      message: {
+        type: "ROOM_EVENT",
+        event: {
+          type: "SET_AUDIO_SOURCES",
+          sources: room.getAudioSources(),
+        },
+      },
+    });
+  };
+
   try {
     const plan = await getYoutubeImportPlan(message.url, message.mode ?? "video");
 
@@ -155,6 +169,7 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
         if (!alreadyInQueue) {
           room.addAudioSource(source);
           queueChanged = true;
+          broadcastAudioSources();
         }
 
         if (reusedExisting) {
@@ -179,20 +194,6 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
           },
         });
       }
-    }
-
-    if (queueChanged) {
-      sendBroadcast({
-        server,
-        roomId,
-        message: {
-          type: "ROOM_EVENT",
-          event: {
-            type: "SET_AUDIO_SOURCES",
-            sources: room.getAudioSources(),
-          },
-        },
-      });
     }
 
     if (playlistId && playlistTracks.length > 0) {
@@ -233,9 +234,9 @@ export const handleImportYoutube: HandlerFunction<ExtractWSRequestFrom["IMPORT_Y
               ? `"${tracks[0]?.title ?? "YouTube video"}" is already downloaded`
               : reusedCount > 0
                 ? `Queued "${tracks[0]?.title ?? "YouTube video"}" from your library`
-            : importedCount > 0
-              ? `Imported "${tracks[0]?.title ?? "YouTube video"}"`
-              : trackFailureMessages[0] ?? "Failed to import the YouTube media",
+                : importedCount > 0
+                  ? `Imported "${tracks[0]?.title ?? "YouTube video"}"`
+                  : (trackFailureMessages[0] ?? "Failed to import the YouTube media"),
         importedCount,
         failedCount,
         collectionName: plan.kind === "playlist" ? plan.title : undefined,

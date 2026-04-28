@@ -3,7 +3,7 @@ import { audioContextManager, isAudioContextPaused } from "@/lib/audioContextMan
 import { getClientId } from "@/lib/clientId";
 import { getKickBuffer } from "@/components/dashboard/Metronome";
 import { IS_DEMO_MODE } from "@/lib/demo";
-import { resolvePlaybackOrder } from "@/lib/playbackOrder";
+import { canDriveAutoplay, resolvePlaybackOrder } from "@/lib/playbackOrder";
 import {
   derivePlaylistsFromAudioSources,
   findPlaylistIdForTrack,
@@ -458,7 +458,8 @@ const syncPlaybackContext = ({
 
   const urls =
     currentContext.scope === "playlist"
-      ? playlists.find((playlist) => playlist.id === currentContext.playlistId)?.tracks.map((track) => track.url) ?? []
+      ? (playlists.find((playlist) => playlist.id === currentContext.playlistId)?.tracks.map((track) => track.url) ??
+        [])
       : buildAllTracksPlaybackUrls({ sources, playlists });
 
   if (urls.length === 0) {
@@ -1485,6 +1486,17 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
     skipToNextTrack: (isAutoplay = false) => {
       const state = get();
       const { selectedAudioUrl: selectedAudioId, isShuffled, playbackContext } = state;
+
+      if (isAutoplay && !canDriveAutoplay(state)) {
+        set({
+          isPlaying: false,
+          currentTime: state.duration,
+          playbackOffset: state.duration,
+          playbackStartTime: 0,
+        });
+        return;
+      }
+
       const playbackOrder = resolvePlaybackOrder(state, { autoplay: isAutoplay });
       if (playbackOrder.length <= 1) {
         if (isAutoplay) {

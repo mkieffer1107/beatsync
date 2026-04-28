@@ -782,6 +782,17 @@ export class RoomManager {
     return this.audioSources;
   }
 
+  clearAudioQueue(): AudioSourceType[] {
+    if (this.audioSources.length === 0) {
+      return this.audioSources;
+    }
+
+    this.audioSources = [];
+    this.playbackState = INITIAL_PLAYBACK_STATE;
+    this.clearAudioLoadingState();
+    return this.audioSources;
+  }
+
   // Set all audio sources (used in backup restoration)
   setAudioSources(sources: AudioSourceInput[]): AudioSourceType[] {
     this.audioSources = sources.map((source) => this.normalizeAudioSource(source));

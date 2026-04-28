@@ -26,8 +26,17 @@ function resolveServerPort(): number {
   return DEFAULT_SERVER_PORT;
 }
 
+function resolveServerHost(): string {
+  const value = process.env.SERVER_HOST?.trim();
+  if (value) {
+    return value;
+  }
+
+  return DEFAULT_SERVER_HOST;
+}
+
 // Allow reverse proxies to bind Beatsync to loopback without changing code.
-const SERVER_HOST = process.env.SERVER_HOST?.trim() || DEFAULT_SERVER_HOST;
+const SERVER_HOST = resolveServerHost();
 const SERVER_PORT = resolveServerPort();
 
 // Bun.serve with WebSocket support

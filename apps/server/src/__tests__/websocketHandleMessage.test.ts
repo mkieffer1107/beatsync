@@ -94,4 +94,33 @@ describe("handleMessage", () => {
     // Playback state should be paused
     expect(room.getPlaybackState().type).toBe("paused");
   });
+
+  it("should clear the live queue without deleting playlist state", async () => {
+    const ws = createMockWs({ clientId: "client-1", roomId: ROOM_ID });
+    handleOpen(ws, server);
+
+    const room = globalManager.getRoom(ROOM_ID)!;
+    room.addAudioSource({ url: "https://example.com/one.mp3" });
+    room.addAudioSource({ url: "https://example.com/two.mp3" });
+    room.createPlaylist({
+      name: "Saved Set",
+      trackUrls: ["https://example.com/one.mp3", "https://example.com/two.mp3"],
+    });
+
+    broadcastMessages = [];
+
+    await handleMessage(ws, JSON.stringify({ type: "CLEAR_AUDIO_QUEUE" }), server);
+
+    expect(room.getAudioSources()).toEqual([]);
+    expect(room.getPlaylists()[0]?.trackUrls).toEqual(["https://example.com/one.mp3", "https://example.com/two.mp3"]);
+
+    const queueBroadcast = broadcastMessages.find(
+      (msg) => msg.message.type === "ROOM_EVENT" && msg.message.event.type === "SET_AUDIO_SOURCES"
+    );
+    expect(queueBroadcast).toBeTruthy();
+    if (queueBroadcast?.message.type !== "ROOM_EVENT" || queueBroadcast.message.event.type !== "SET_AUDIO_SOURCES") {
+      throw new Error("Expected SET_AUDIO_SOURCES");
+    }
+    expect(queueBroadcast.message.event.sources).toEqual([]);
+  });
 });

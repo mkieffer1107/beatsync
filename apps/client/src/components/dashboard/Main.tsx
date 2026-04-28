@@ -1,6 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { ChevronDown } from "lucide-react";
+import { useCanMutate, useGlobalStore } from "@/store/global";
+import { sendWSRequest } from "@/utils/ws";
+import { ClientActionEnum } from "@beatsync/shared";
+import { ChevronDown, Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { Queue } from "../Queue";
@@ -9,6 +12,22 @@ import { InlineSearch } from "./InlineSearch";
 
 export const Main = () => {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const canMutate = useCanMutate();
+  const audioSourceCount = useGlobalStore((state) => state.audioSources.length);
+  const socket = useGlobalStore((state) => state.socket);
+
+  const handleClearQueue = () => {
+    if (!canMutate || !socket || audioSourceCount === 0) {
+      return;
+    }
+
+    sendWSRequest({
+      ws: socket,
+      request: {
+        type: ClientActionEnum.enum.CLEAR_AUDIO_QUEUE,
+      },
+    });
+  };
 
   return (
     <motion.div
@@ -25,15 +44,29 @@ export const Main = () => {
 
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <h2 className="text-2xl font-semibold tracking-tight text-white">Live Queue</h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsLibraryOpen((currentState) => !currentState)}
-            className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
-          >
-            {isLibraryOpen ? "Hide Library" : "Show Library"}
-            <ChevronDown className={cn("size-4 transition-transform duration-200", isLibraryOpen ? "rotate-180" : null)} />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearQueue}
+              disabled={!canMutate || audioSourceCount === 0}
+              className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08] disabled:opacity-40"
+            >
+              <Trash2 className="size-4" />
+              Clear Queue
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsLibraryOpen((currentState) => !currentState)}
+              className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+            >
+              {isLibraryOpen ? "Hide Library" : "Show Library"}
+              <ChevronDown
+                className={cn("size-4 transition-transform duration-200", isLibraryOpen ? "rotate-180" : null)}
+              />
+            </Button>
+          </div>
         </div>
 
         <AnimatePresence initial={false}>

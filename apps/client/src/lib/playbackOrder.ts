@@ -16,8 +16,48 @@ export interface PlaybackOrderStateLike {
   selectedAudioUrl: string;
 }
 
+export interface PlaybackClientLike {
+  clientId: string;
+  isAdmin: boolean;
+  joinedAt: number;
+}
+
+export interface AutoplayAuthorityStateLike {
+  connectedClients: PlaybackClientLike[];
+  currentUser: PlaybackClientLike | null;
+  playbackControlsPermissions: "ADMIN_ONLY" | "EVERYONE";
+}
+
 export const getQueuePlaybackOrder = (audioSources: PlaybackOrderAudioSourceLike[]) =>
   audioSources.map((audioSource) => audioSource.source.url);
+
+const sortByStableRoomOrder = (left: PlaybackClientLike, right: PlaybackClientLike) =>
+  left.joinedAt - right.joinedAt || left.clientId.localeCompare(right.clientId);
+
+export const getAutoplayDriverClientId = (state: AutoplayAuthorityStateLike) => {
+  const clientsById = new Map(state.connectedClients.map((client) => [client.clientId, client]));
+  if (state.currentUser && !clientsById.has(state.currentUser.clientId)) {
+    clientsById.set(state.currentUser.clientId, state.currentUser);
+  }
+
+  const connectedClients = Array.from(clientsById.values());
+  const admins = connectedClients.filter((client) => client.isAdmin).sort(sortByStableRoomOrder);
+  if (admins[0]) {
+    return admins[0].clientId;
+  }
+
+  if (state.playbackControlsPermissions !== "EVERYONE") {
+    return null;
+  }
+
+  const clients = connectedClients.sort(sortByStableRoomOrder);
+  return clients[0]?.clientId ?? state.currentUser?.clientId ?? null;
+};
+
+export const canDriveAutoplay = (state: AutoplayAuthorityStateLike) => {
+  const currentClientId = state.currentUser?.clientId;
+  return Boolean(currentClientId && currentClientId === getAutoplayDriverClientId(state));
+};
 
 export const resolvePlaybackOrder = (
   state: PlaybackOrderStateLike,

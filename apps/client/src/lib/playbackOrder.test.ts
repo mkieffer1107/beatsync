@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { getQueuePlaybackOrder, resolvePlaybackOrder, type PlaybackOrderStateLike } from "@/lib/playbackOrder";
+import {
+  canDriveAutoplay,
+  getAutoplayDriverClientId,
+  getQueuePlaybackOrder,
+  resolvePlaybackOrder,
+  type PlaybackOrderStateLike,
+} from "@/lib/playbackOrder";
 
 const createState = (overrides?: Partial<PlaybackOrderStateLike>): PlaybackOrderStateLike => ({
   audioSources: [
@@ -50,5 +56,34 @@ describe("playbackOrder", () => {
       "track-4",
       "track-5",
     ]);
+  });
+
+  it("selects one stable autoplay driver from room admins", () => {
+    const state = {
+      connectedClients: [
+        { clientId: "viewer", isAdmin: false, joinedAt: 1 },
+        { clientId: "admin-later", isAdmin: true, joinedAt: 3 },
+        { clientId: "admin-first", isAdmin: true, joinedAt: 2 },
+      ],
+      currentUser: { clientId: "admin-first", isAdmin: true, joinedAt: 2 },
+      playbackControlsPermissions: "EVERYONE" as const,
+    };
+
+    expect(getAutoplayDriverClientId(state)).toBe("admin-first");
+    expect(canDriveAutoplay(state)).toBe(true);
+  });
+
+  it("falls back to the first connected client only when everyone can control playback", () => {
+    const state = {
+      connectedClients: [
+        { clientId: "client-2", isAdmin: false, joinedAt: 2 },
+        { clientId: "client-1", isAdmin: false, joinedAt: 1 },
+      ],
+      currentUser: { clientId: "client-2", isAdmin: false, joinedAt: 2 },
+      playbackControlsPermissions: "EVERYONE" as const,
+    };
+
+    expect(getAutoplayDriverClientId(state)).toBe("client-1");
+    expect(canDriveAutoplay(state)).toBe(false);
   });
 });

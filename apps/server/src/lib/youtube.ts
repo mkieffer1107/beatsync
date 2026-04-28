@@ -111,13 +111,19 @@ function runCommand(command: string, args: string[], options?: { cwd?: string })
 
 function getYoutubeVideoId(url: URL): string | null {
   if (url.hostname === "youtu.be") {
-    const videoId = url.pathname.split("/").filter(Boolean)[0]?.trim();
-    return videoId || null;
+    const videoId = url.pathname.split("/").find(Boolean)?.trim();
+    if (!videoId) {
+      return null;
+    }
+    return videoId;
   }
 
   if (url.pathname === "/watch") {
     const videoId = url.searchParams.get("v")?.trim();
-    return videoId || null;
+    if (!videoId) {
+      return null;
+    }
+    return videoId;
   }
 
   return null;
@@ -235,7 +241,10 @@ async function resolveYtDlpBinary(): Promise<ResolvedYtDlpBinary> {
     }
 
     resolvedCandidates.sort((left, right) => {
-      const versionComparison = compareParsedVersions(parseYtDlpVersion(left.version ?? ""), parseYtDlpVersion(right.version ?? ""));
+      const versionComparison = compareParsedVersions(
+        parseYtDlpVersion(left.version ?? ""),
+        parseYtDlpVersion(right.version ?? "")
+      );
       if (versionComparison !== 0) {
         return -versionComparison;
       }
@@ -354,10 +363,7 @@ function getYoutubeDownloadAttempts(track: YoutubeImportTrack): YtDlpAttempt[] {
   }));
 }
 
-function formatYoutubeDownloadError(params: {
-  errors: Error[];
-  ytDlpBinary: ResolvedYtDlpBinary;
-}): Error {
+function formatYoutubeDownloadError(params: { errors: Error[]; ytDlpBinary: ResolvedYtDlpBinary }): Error {
   const { errors, ytDlpBinary } = params;
   const lastError = errors[errors.length - 1];
   const combined = errors.map((error) => error.message).join("\n");
@@ -369,7 +375,11 @@ function formatYoutubeDownloadError(params: {
     );
   }
 
-  if (/Sign in to confirm you(?:'|’)re not a bot|cookies-from-browser|HTTP Error 403|The page needs to be reloaded/i.test(combined)) {
+  if (
+    /Sign in to confirm you(?:'|’)re not a bot|cookies-from-browser|HTTP Error 403|The page needs to be reloaded/i.test(
+      combined
+    )
+  ) {
     hints.push(
       "This video currently needs an authenticated YouTube session. Set YTDLP_COOKIES_FROM_BROWSER=chrome (or another supported browser) in apps/server/.env and restart the server."
     );
@@ -525,7 +535,9 @@ export async function downloadYoutubeTrack(track: YoutubeImportTrack): Promise<D
         };
       } catch (error) {
         errors.push(
-          error instanceof Error ? new Error(`${attempt.label}: ${error.message}`) : new Error(`${attempt.label}: ${String(error)}`)
+          error instanceof Error
+            ? new Error(`${attempt.label}: ${error.message}`)
+            : new Error(`${attempt.label}: ${String(error)}`)
         );
       }
     }

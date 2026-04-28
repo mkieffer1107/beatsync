@@ -29,6 +29,20 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
   observePublicBaseUrl(ws.data.serverOrigin);
   room.cancelCleanup();
 
+  const broadcastAudioSources = () => {
+    sendBroadcast({
+      server,
+      roomId,
+      message: {
+        type: "ROOM_EVENT",
+        event: {
+          type: "SET_AUDIO_SOURCES",
+          sources: room.getAudioSources(),
+        },
+      },
+    });
+  };
+
   room.getPlaylists();
   const playlist = room.getPlaylist(message.playlistId);
 
@@ -81,16 +95,15 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
         .filter((sourceUrl): sourceUrl is string => Boolean(sourceUrl))
     );
     const existingExternalIds = new Set(
-      playlist.tracks
-        .map((track) => track.externalId)
-        .filter((externalId): externalId is string => Boolean(externalId))
+      playlist.tracks.map((track) => track.externalId).filter((externalId): externalId is string => Boolean(externalId))
     );
     const missingTracks = plan.tracks.filter(
       (track) =>
-        !existingSourceUrls.has(track.sourceUrl) &&
-        !existingExternalIds.has(buildYoutubeTrackExternalId(track.id))
+        !existingSourceUrls.has(track.sourceUrl) && !existingExternalIds.has(buildYoutubeTrackExternalId(track.id))
     );
-    const tracksToImport = missingTracks.filter((track) => !room.hasActiveStreamJob(buildYoutubeTrackExternalId(track.id)));
+    const tracksToImport = missingTracks.filter(
+      (track) => !room.hasActiveStreamJob(buildYoutubeTrackExternalId(track.id))
+    );
 
     if (missingTracks.length === 0) {
       sendUnicast({
@@ -171,6 +184,12 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
         });
 
         appendedTracks.push(source);
+        const alreadyInQueue = room.getAudioSources().some((audioSource) => audioSource.url === source.url);
+        if (!alreadyInQueue) {
+          room.addAudioSource(source);
+          broadcastAudioSources();
+        }
+
         importedCount += 1;
         if (reusedExisting) {
           reusedCount += 1;
@@ -227,7 +246,7 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
         message:
           importedCount > 0
             ? `Added ${importedCount} new track${importedCount === 1 ? "" : "s"} to "${nextCollectionName}"${reusedCount > 0 ? " using existing downloads where possible" : ""}`
-            : trackFailureMessages[0] ?? `Failed to refresh "${nextCollectionName}"`,
+            : (trackFailureMessages[0] ?? `Failed to refresh "${nextCollectionName}"`),
         importedCount,
         failedCount,
         collectionName: nextCollectionName,

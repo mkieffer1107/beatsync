@@ -1,5 +1,6 @@
 import { ClientActionEnum } from "@beatsync/shared";
 import { handleAudioSourceLoaded } from "@/websocket/handlers/handleAudioSourceLoaded";
+import { handleClearAudioQueue } from "@/websocket/handlers/handleClearAudioQueue";
 import { handleDeleteAudioSources } from "@/websocket/handlers/handleDeleteAudioSources";
 import { handleDeletePlaylist } from "@/websocket/handlers/handleDeletePlaylist";
 import { handleLoadDefaultTracks } from "@/websocket/handlers/handleLoadDefaultTracks";
@@ -83,6 +84,11 @@ export const WS_REGISTRY: WebsocketRegistry = {
   [ClientActionEnum.enum.LOAD_DEFAULT_TRACKS]: {
     handle: handleLoadDefaultTracks,
     description: "Load default tracks into the room if queue is empty",
+  },
+
+  [ClientActionEnum.enum.CLEAR_AUDIO_QUEUE]: {
+    handle: handleClearAudioQueue,
+    description: "Clear all audio sources from the live room queue",
   },
 
   [ClientActionEnum.enum.DELETE_AUDIO_SOURCES]: {
