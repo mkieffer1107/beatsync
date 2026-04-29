@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,10 +40,6 @@ interface LibraryTrackItem {
   queueIndex: number;
   playlistIds: string[];
   playlistNames: string[];
-}
-
-interface PendingQueuedPlayback {
-  targetUrl: string;
 }
 
 const getPlaylistAccentLabel = (playlist: PlaylistLibraryItem) => {
@@ -204,6 +200,7 @@ const TrackListRow = ({
   source,
   rowNumber,
   isActive,
+  isPlayable,
   canMutate,
   isPlaying,
   onPlay,
@@ -215,34 +212,38 @@ const TrackListRow = ({
   source: PlaylistTrack["source"];
   rowNumber: number;
   isActive: boolean;
+  isPlayable: boolean;
   canMutate: boolean;
   isPlaying: boolean;
   onPlay: () => void;
   onDelete?: () => void;
 }) => {
   const duration = useResolvedAudioDuration(source);
-  const isPlayable = canMutate;
+  const canPlay = canMutate && isPlayable;
 
   return (
     <div
       className={cn(
         "group flex items-center gap-2 px-4 py-3.5 transition-colors",
-        isPlayable ? "hover:bg-white/[0.03]" : null,
+        canPlay ? "hover:bg-white/[0.03]" : null,
         isActive ? "bg-white/[0.05]" : null
       )}
     >
       <button
         type="button"
         onClick={() => {
-          if (isPlayable) {
+          if (canPlay) {
             onPlay();
           }
         }}
-        aria-disabled={!isPlayable}
-        className={cn("flex min-w-0 flex-1 items-center gap-3 text-left", isPlayable ? "cursor-pointer" : "cursor-default")}
+        aria-disabled={!canPlay}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-3 text-left",
+          canPlay ? "cursor-pointer" : "cursor-default"
+        )}
       >
         <div className="relative flex h-6 w-8 flex-shrink-0 items-center justify-center text-sm font-medium">
-          {isPlayable ? (
+          {canPlay ? (
             <>
               <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
                 {isActive && isPlaying ? (
@@ -318,7 +319,6 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
   const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
   const [libraryView, setLibraryView] = useState<"all" | "playlist">("all");
   const [confirmDeletePlaylistId, setConfirmDeletePlaylistId] = useState<string | null>(null);
-  const [pendingQueuedPlayback, setPendingQueuedPlayback] = useState<PendingQueuedPlayback | null>(null);
 
   const visiblePlaylist = selectedPlaylist ?? playlists[0] ?? null;
   const activePlaylistId = selectedPlaylistId ?? visiblePlaylist?.id ?? null;
@@ -380,6 +380,14 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
   );
   const queuedTrackUrls = useMemo(() => audioSources.map((sourceState) => sourceState.source.url), [audioSources]);
   const queuedTrackUrlSet = useMemo(() => new Set(queuedTrackUrls), [queuedTrackUrls]);
+  const playableLibraryTrackUrls = useMemo(
+    () => libraryTrackUrls.filter((url) => queuedTrackUrlSet.has(url)),
+    [libraryTrackUrls, queuedTrackUrlSet]
+  );
+  const visiblePlaylistQueuedTrackUrls = useMemo(
+    () => visiblePlaylistTrackUrls.filter((url) => queuedTrackUrlSet.has(url)),
+    [visiblePlaylistTrackUrls, queuedTrackUrlSet]
+  );
   const isAllTracksContextActive = playbackContext?.scope === "all-tracks";
   const isVisiblePlaylistContextActive =
     playbackContext?.scope === "playlist" && playbackContext.playlistId === visiblePlaylist?.id;
@@ -436,79 +444,32 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     return true;
   };
 
-  useEffect(() => {
-    if (!pendingQueuedPlayback) {
-      return;
-    }
-
-    if (!queuedTrackUrlSet.has(pendingQueuedPlayback.targetUrl)) {
-      return;
-    }
-
-    const { targetUrl } = pendingQueuedPlayback;
-    queueMicrotask(() => {
-      setPendingQueuedPlayback(null);
-      changeAudioSource(targetUrl);
-      broadcastPlay(0);
-    });
-  }, [broadcastPlay, changeAudioSource, pendingQueuedPlayback, queuedTrackUrlSet]);
-
-  const queueMissingTrackUrls = (urls: string[]) => {
-    const missingUrls = [...new Set(urls)].filter((url) => !queuedTrackUrlSet.has(url));
-    if (missingUrls.length === 0) {
-      return missingUrls;
-    }
-
-    sendWSRequest({
-      ws: socket!,
-      request: {
-        type: ClientActionEnum.enum.QUEUE_TRACKS,
-        urls: missingUrls,
-      },
-    });
-
-    return missingUrls;
-  };
-
   const startContextPlayback = ({
     context,
     targetUrl,
-    queueUrls,
     shuffle,
   }: {
     context: PlaybackContext;
     targetUrl: string;
-    queueUrls: string[];
     shuffle: boolean;
   }) => {
-    setPlaybackContext(context);
-    setShuffleEnabled(shuffle);
-
-    const missingUrls = queueMissingTrackUrls(queueUrls);
-    if (missingUrls.length > 0) {
-      if (!queuedTrackUrlSet.has(targetUrl)) {
-        setPendingQueuedPlayback({
-          targetUrl,
-        });
-        return;
-      }
+    if (!queuedTrackUrlSet.has(targetUrl)) {
+      return;
     }
 
-    setPendingQueuedPlayback(null);
+    setPlaybackContext(context);
+    setShuffleEnabled(shuffle);
     changeAudioSource(targetUrl);
     broadcastPlay(0);
   };
 
-  const handleScopedTrackSelect = ({
-    trackUrl,
-    context,
-    queueUrls,
-  }: {
-    trackUrl: string;
-    context: PlaybackContext;
-    queueUrls: string[];
-  }) => {
+  const handleScopedTrackSelect = ({ trackUrl, context }: { trackUrl: string; context: PlaybackContext }) => {
     if (!ensureMutationAccess()) {
+      return;
+    }
+
+    if (!queuedTrackUrlSet.has(trackUrl)) {
+      toast.message("Add this playlist to the queue before playing saved-only tracks");
       return;
     }
 
@@ -516,8 +477,6 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     setShuffleEnabled(false);
 
     if (selectedAudioUrl === trackUrl) {
-      queueMissingTrackUrls(queueUrls);
-      setPendingQueuedPlayback(null);
       if (isPlaying) {
         broadcastPause();
       } else {
@@ -529,44 +488,41 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     startContextPlayback({
       context,
       targetUrl: trackUrl,
-      queueUrls,
       shuffle: false,
     });
   };
 
   const handlePlayAllTracks = (shuffle: boolean) => {
-    if (!ensureMutationAccess() || libraryTrackUrls.length === 0) {
+    if (!ensureMutationAccess() || playableLibraryTrackUrls.length === 0) {
       return;
     }
 
     const context: PlaybackContext = {
       scope: "all-tracks",
-      urls: libraryTrackUrls,
+      urls: playableLibraryTrackUrls,
     };
 
     startContextPlayback({
       context,
-      targetUrl: shuffle ? pickRandomTrackUrl(libraryTrackUrls)! : libraryTrackUrls[0]!,
-      queueUrls: libraryTrackUrls,
+      targetUrl: shuffle ? pickRandomTrackUrl(playableLibraryTrackUrls)! : playableLibraryTrackUrls[0]!,
       shuffle,
     });
   };
 
   const handlePlayPlaylist = (shuffle: boolean) => {
-    if (!ensureMutationAccess() || !visiblePlaylist || visiblePlaylistTrackUrls.length === 0) {
+    if (!ensureMutationAccess() || !visiblePlaylist || visiblePlaylistQueuedTrackUrls.length === 0) {
       return;
     }
 
     const context: PlaybackContext = {
       scope: "playlist",
       playlistId: visiblePlaylist.id,
-      urls: visiblePlaylistTrackUrls,
+      urls: visiblePlaylistQueuedTrackUrls,
     };
 
     startContextPlayback({
       context,
-      targetUrl: shuffle ? pickRandomTrackUrl(visiblePlaylistTrackUrls)! : visiblePlaylistTrackUrls[0]!,
-      queueUrls: visiblePlaylistTrackUrls,
+      targetUrl: shuffle ? pickRandomTrackUrl(visiblePlaylistQueuedTrackUrls)! : visiblePlaylistQueuedTrackUrls[0]!,
       shuffle,
     });
   };
@@ -672,7 +628,9 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
       return;
     }
 
-    const affectedPlaylists = playlists.filter((playlist) => playlist.tracks.some((playlistTrack) => playlistTrack.url === track.url));
+    const affectedPlaylists = playlists.filter((playlist) =>
+      playlist.tracks.some((playlistTrack) => playlistTrack.url === track.url)
+    );
 
     affectedPlaylists.forEach((playlist) => {
       sendWSRequest({
@@ -680,7 +638,9 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
         request: {
           type: ClientActionEnum.enum.SET_PLAYLIST_TRACKS,
           playlistId: playlist.id,
-          trackUrls: playlist.tracks.filter((playlistTrack) => playlistTrack.url !== track.url).map((playlistTrack) => playlistTrack.url),
+          trackUrls: playlist.tracks
+            .filter((playlistTrack) => playlistTrack.url !== track.url)
+            .map((playlistTrack) => playlistTrack.url),
         },
       });
     });
@@ -821,7 +781,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {libraryTrackUrls.length > 0 && canMutate ? (
+                    {playableLibraryTrackUrls.length > 0 && canMutate ? (
                       <>
                         <Button
                           variant="outline"
@@ -830,7 +790,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                           className={getPlaybackButtonClassName(isAllTracksContextActive && !isShuffled)}
                         >
                           <Play className="size-4 fill-current" />
-                          Play All
+                          {savedOnlyTrackCount > 0 ? "Play Queued" : "Play All"}
                         </Button>
                         <Button
                           variant="outline"
@@ -839,7 +799,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                           className={getPlaybackButtonClassName(isAllTracksContextActive && isShuffled)}
                         >
                           <Shuffle className="size-4" />
-                          Shuffle
+                          {savedOnlyTrackCount > 0 ? "Shuffle Queued" : "Shuffle"}
                         </Button>
                       </>
                     ) : null}
@@ -866,11 +826,11 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                       source={track.source}
                       rowNumber={index + 1}
                       canMutate={canMutate}
+                      isPlayable={queuedTrackUrlSet.has(track.url)}
                       isActive={selectedAudioUrl === track.url}
                       isPlaying={isPlaying}
                       onPlay={() => {
-                        const trackIndex = libraryTrackUrls.indexOf(track.url);
-                        if (trackIndex < 0) {
+                        if (!playableLibraryTrackUrls.includes(track.url)) {
                           return;
                         }
 
@@ -878,9 +838,8 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                           trackUrl: track.url,
                           context: {
                             scope: "all-tracks",
-                            urls: libraryTrackUrls,
+                            urls: playableLibraryTrackUrls,
                           },
-                          queueUrls: libraryTrackUrls.slice(trackIndex),
                         });
                       }}
                       onDelete={canMutate ? () => handleDeleteTrack(track) : undefined}
@@ -928,7 +887,12 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                 {playlists.length > 0 ? (
                   <div className="space-y-2 p-3">
                     {playlists.map((playlist) => (
-                      <motion.div key={playlist.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                      <motion.div
+                        key={playlist.id}
+                        layout
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                      >
                         <PlaylistNavItem
                           playlist={playlist}
                           isActive={playlist.id === activePlaylistId}
@@ -1019,13 +983,17 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                                 }
                                 setConfirmDeletePlaylistId(visiblePlaylist.id);
                               }}
-                            className={cn(
-                              "border-white/10 text-white hover:bg-white/[0.08]",
-                              confirmDeletePlaylistId === visiblePlaylist.id ? "bg-red-500/10 hover:bg-red-500/15" : "bg-white/[0.03]"
-                            )}
-                          >
+                              className={cn(
+                                "border-white/10 text-white hover:bg-white/[0.08]",
+                                confirmDeletePlaylistId === visiblePlaylist.id
+                                  ? "bg-red-500/10 hover:bg-red-500/15"
+                                  : "bg-white/[0.03]"
+                              )}
+                            >
                               <Trash2 className="size-4" />
-                              {confirmDeletePlaylistId === visiblePlaylist.id ? "Confirm Delete Playlist" : "Delete Playlist"}
+                              {confirmDeletePlaylistId === visiblePlaylist.id
+                                ? "Confirm Delete Playlist"
+                                : "Delete Playlist"}
                             </Button>
                           ) : null}
                           <Button
@@ -1042,21 +1010,21 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                             variant="outline"
                             size="sm"
                             onClick={() => handlePlayPlaylist(true)}
-                            disabled={!canMutate || visiblePlaylistTrackUrls.length === 0}
+                            disabled={!canMutate || visiblePlaylistQueuedTrackUrls.length === 0}
                             className={getPlaybackButtonClassName(isVisiblePlaylistContextActive && isShuffled)}
                           >
                             <Shuffle className="size-4" />
-                            Shuffle Playlist
+                            {hasLibraryOnlyTracks ? "Shuffle Queued" : "Shuffle Playlist"}
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => handlePlayPlaylist(false)}
-                            disabled={!canMutate || visiblePlaylistTrackUrls.length === 0}
+                            disabled={!canMutate || visiblePlaylistQueuedTrackUrls.length === 0}
                             className={getPlaybackButtonClassName(isVisiblePlaylistContextActive && !isShuffled)}
                           >
                             <Play className="size-4 fill-current" />
-                            Play Playlist
+                            {hasLibraryOnlyTracks ? "Play Queued Tracks" : "Play Playlist"}
                           </Button>
                         </div>
                       </div>
@@ -1069,15 +1037,17 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                             key={`${visiblePlaylist.id}:${track.url}`}
                             artworkUrl={track.artworkUrl ?? getAudioSourceArtworkUrl(track.source)}
                             title={track.title}
-                            metaLabel={track.queueIndex >= 0 ? `Queue slot ${track.queueIndex + 1}` : "Saved only in playlist"}
+                            metaLabel={
+                              track.queueIndex >= 0 ? `Queue slot ${track.queueIndex + 1}` : "Saved only in playlist"
+                            }
                             source={track.source}
                             rowNumber={track.position}
                             canMutate={canMutate}
+                            isPlayable={queuedTrackUrlSet.has(track.url)}
                             isActive={selectedAudioUrl === track.url}
                             isPlaying={isPlaying}
                             onPlay={() => {
-                              const trackIndex = visiblePlaylistTrackUrls.indexOf(track.url);
-                              if (trackIndex < 0 || !visiblePlaylist) {
+                              if (!visiblePlaylist || !visiblePlaylistQueuedTrackUrls.includes(track.url)) {
                                 return;
                               }
 
@@ -1086,9 +1056,8 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                                 context: {
                                   scope: "playlist",
                                   playlistId: visiblePlaylist.id,
-                                  urls: visiblePlaylistTrackUrls,
+                                  urls: visiblePlaylistQueuedTrackUrls,
                                 },
-                                queueUrls: visiblePlaylistTrackUrls.slice(trackIndex),
                               });
                             }}
                             onDelete={canMutate ? () => handleDeleteTrack(track) : undefined}

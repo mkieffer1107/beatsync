@@ -47,6 +47,11 @@ and start the single-hostname production stack. It reads
 [`apps/server/.env.production`](./apps/server/.env.production) and
 [`apps/client/.env.production`](./apps/client/.env.production).
 
+For a one-room LAN setup, use `bun run lan:prod --single-room` or
+`bun run lan:prod:single-room`. That builds the client so the root URL redirects
+to `/room/123456`; use `--single-room=654321` if you want a different 6-digit
+room.
+
 Run the following commands to start the server and client:
 
 ```sh

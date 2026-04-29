@@ -2,9 +2,11 @@
 import { Join } from "@/components/Join";
 import { NewSyncer } from "@/components/NewSyncer";
 import { DEMO_ROOM_ID, IS_DEMO_MODE } from "@/lib/demo";
+import { IS_SINGLE_ROOM_MODE, SINGLE_ROOM_ID } from "@/lib/singleRoom";
 import { useChatStore } from "@/store/chat";
 import { useGlobalStore } from "@/store/global";
 import { useRoomStore } from "@/store/room";
+import { redirect } from "next/navigation";
 import { useEffect } from "react";
 
 export default function Home() {
@@ -23,6 +25,10 @@ export default function Home() {
 
   if (IS_DEMO_MODE) {
     return <NewSyncer roomId={DEMO_ROOM_ID} />;
+  }
+
+  if (IS_SINGLE_ROOM_MODE) {
+    redirect(`/room/${SINGLE_ROOM_ID}`);
   }
 
   return <Join />;

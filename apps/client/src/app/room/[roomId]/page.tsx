@@ -1,6 +1,7 @@
 import { NewSyncer } from "@/components/NewSyncer";
 import { DEMO_ROOM_ID, IS_DEMO_MODE } from "@/lib/demo";
 import { validateFullRoomId } from "@/lib/room";
+import { IS_SINGLE_ROOM_MODE, SINGLE_ROOM_ID } from "@/lib/singleRoom";
 import { redirect } from "next/navigation";
 
 // Force dynamic rendering and disable caching
@@ -12,6 +13,10 @@ export default async function Page({ params }: { params: Promise<{ roomId: strin
 
   if (IS_DEMO_MODE && roomId !== DEMO_ROOM_ID) {
     redirect("/");
+  }
+
+  if (!IS_DEMO_MODE && IS_SINGLE_ROOM_MODE && roomId !== SINGLE_ROOM_ID) {
+    redirect(`/room/${SINGLE_ROOM_ID}`);
   }
 
   if (!validateFullRoomId(roomId)) {

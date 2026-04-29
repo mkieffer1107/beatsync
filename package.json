@@ -10,6 +10,7 @@
     "lan:dev": "./scripts/run-lan-stack.sh dev",
     "lan:start": "./scripts/run-lan-stack.sh start",
     "lan:prod": "./scripts/run-lan-prod.sh",
+    "lan:prod:single-room": "./scripts/run-lan-prod.sh --single-room",
     "lan:check": "./scripts/check-lan-site.sh",
     "lan:proxy": "caddy run --config ./Caddyfile",
     "docker:build": "docker build -t beatsync .",
