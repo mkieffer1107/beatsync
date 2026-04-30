@@ -11,6 +11,7 @@ export function isAudioContextPaused(state: AudioContextState | string | undefin
 // WAV is used instead of MP3 because some older iOS versions reject
 // MP3 data URLs with NotSupportedError.
 const SILENCE_DATA_URL = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQIAAAAAAA==";
+const AUDIO_UNLOCK_GESTURE_EVENTS = ["pointerdown", "click", "touchend", "keydown"] as const;
 
 /**
  * Singleton AudioContext Manager
@@ -29,6 +30,7 @@ class AudioContextManager {
   private hasVisibilityListener = false;
   private silentAudioElement: HTMLAudioElement | null = null;
   private hasRegisteredGestureListeners = false;
+  private hasRegisteredResumeGestureListeners = false;
 
   private constructor() {
     // Private constructor to enforce singleton pattern
@@ -65,6 +67,7 @@ class AudioContextManager {
       this.audioContext = new AudioContext();
       this.setupStateChangeListener();
       this.setupMasterGain();
+      this.registerAudioContextResumeGestureListeners();
       this.registerSilentAudioBypass();
     }
     return this.audioContext;
@@ -103,6 +106,81 @@ class AudioContextManager {
 
     // Request wake lock to prevent device sleep and WiFi power-save mode
     await this.requestWakeLock();
+  }
+
+  async resumeWithTimeout(timeoutMs = 750): Promise<boolean> {
+    if (!this.audioContext || this.audioContext.state === "closed") {
+      return false;
+    }
+
+    if (this.audioContext.state === "running") {
+      await this.requestWakeLock();
+      return true;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const result = await Promise.race([
+        this.resume().then(() => "resumed" as const),
+        new Promise<"timeout">((resolve) => {
+          timeoutId = setTimeout(() => resolve("timeout"), timeoutMs);
+        }),
+      ]);
+
+      if (result === "timeout") {
+        console.warn("[AudioContextManager] AudioContext resume timed out; waiting for a user gesture");
+      }
+    } catch {
+      return false;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    return this.getState() === "running";
+  }
+
+  private registerAudioContextResumeGestureListeners(): void {
+    if (this.hasRegisteredResumeGestureListeners || typeof window === "undefined") return;
+    this.hasRegisteredResumeGestureListeners = true;
+
+    let cleanup = () => {};
+
+    const tryResume = () => {
+      const context = this.audioContext;
+      if (!context || context.state === "closed") {
+        cleanup();
+        return;
+      }
+
+      if (!isAudioContextPaused(context.state)) {
+        cleanup();
+        void this.requestWakeLock();
+        return;
+      }
+
+      void context
+        .resume()
+        .then(() => {
+          void this.requestWakeLock();
+          if (!isAudioContextPaused(context.state)) {
+            cleanup();
+          }
+        })
+        .catch(() => {
+          // Retry on the next gesture.
+        });
+    };
+
+    cleanup = () => {
+      for (const eventName of AUDIO_UNLOCK_GESTURE_EVENTS) {
+        window.removeEventListener(eventName, tryResume, true);
+      }
+    };
+
+    for (const eventName of AUDIO_UNLOCK_GESTURE_EVENTS) {
+      window.addEventListener(eventName, tryResume, { capture: true, passive: true });
+    }
   }
 
   /**

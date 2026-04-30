@@ -825,8 +825,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       void (async () => {
         try {
-          await audioContextManager.resume();
-          console.log("AudioContext resumed via user gesture");
+          const isRunning = await audioContextManager.resumeWithTimeout();
+          if (isRunning) {
+            console.log("AudioContext resumed via user gesture");
+          } else {
+            console.warn("AudioContext did not resume; waiting for a user gesture");
+          }
         } catch (err) {
           console.warn("Failed to resume AudioContext", err);
         }
@@ -1070,28 +1074,36 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
     // if trackTimeSeconds is not provided, use the current track position
     broadcastPlay: (trackTimeSeconds?: number) => {
-      const state = get();
-      const { socket } = getSocket(state);
+      void (async () => {
+        const audioReady = await audioContextManager.resumeWithTimeout();
+        if (!audioReady) {
+          toast.error("Audio is blocked by the browser. Click Start System, then try again.");
+          return;
+        }
 
-      // Use selected audio or fall back to first audio source
-      let audioId = state.selectedAudioUrl;
-      if (!audioId && state.audioSources.length > 0) {
-        audioId = state.audioSources[0].source.url;
-      }
+        const state = get();
+        const { socket } = getSocket(state);
 
-      if (!audioId) {
-        console.error("Cannot broadcast play: No audio available");
-        return;
-      }
+        // Use selected audio or fall back to first audio source
+        let audioId = state.selectedAudioUrl;
+        if (!audioId && state.audioSources.length > 0) {
+          audioId = state.audioSources[0].source.url;
+        }
 
-      sendWSRequest({
-        ws: socket,
-        request: {
-          type: ClientActionEnum.enum.PLAY,
-          trackTimeSeconds: trackTimeSeconds ?? state.getCurrentTrackPosition(),
-          audioSource: audioId,
-        },
-      });
+        if (!audioId) {
+          console.error("Cannot broadcast play: No audio available");
+          return;
+        }
+
+        sendWSRequest({
+          ws: socket,
+          request: {
+            type: ClientActionEnum.enum.PLAY,
+            trackTimeSeconds: trackTimeSeconds ?? state.getCurrentTrackPosition(),
+            audioSource: audioId,
+          },
+        });
+      })();
     },
 
     broadcastPause: () => {
@@ -1310,9 +1322,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       // Before any audio playback, ensure the context is running
       if (audioContext.state !== "running") {
-        console.log("AudioContext still suspended, aborting play");
-        toast.error("Audio context is suspended. Please try again.");
-        return;
+        const isRunning = await audioContextManager.resumeWithTimeout();
+        if (!isRunning || audioContextManager.getState() !== "running") {
+          console.log("AudioContext still suspended, aborting play");
+          toast.error("Audio is blocked by the browser. Click Start System, then try again.");
+          return;
+        }
       }
 
       // Stop any existing source node before creating a new one
@@ -1322,7 +1337,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         sourceNode.stop();
       } catch (_) {}
 
-      const startTime = data.absoluteStartTime ?? audioContext.currentTime + data.when;
+      const startTime = Math.max(
+        data.absoluteStartTime ?? audioContext.currentTime + data.when,
+        audioContext.currentTime
+      );
       const audioIndex = data.audioIndex ?? 0;
       const audioSourceState = state.audioSources[audioIndex];
       if (!audioSourceState) {

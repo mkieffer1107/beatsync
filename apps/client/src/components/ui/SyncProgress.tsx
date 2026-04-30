@@ -1,6 +1,7 @@
 "use client";
 
 import { SOCIAL_LINKS } from "@/constants";
+import { isAutostartUrl, stripAutostartFromRoomUrl } from "@/lib/autostart";
 import { MAX_NTP_MEASUREMENTS, useGlobalStore } from "@/store/global";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -63,7 +64,16 @@ const OuterModal = ({ children }: { children: React.ReactNode }) => {
 
 const PILL_COUNT = 8;
 const MEASUREMENTS_PER_PILL = MAX_NTP_MEASUREMENTS / PILL_COUNT;
-const TRUTHY_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
+
+const replaceAutostartUrl = () => {
+  if (typeof window === "undefined") return;
+
+  const currentUrl = new URL(window.location.href);
+  const strippedUrl = stripAutostartFromRoomUrl(currentUrl);
+  if (strippedUrl.href === currentUrl.href) return;
+
+  window.history.replaceState(window.history.state, "", strippedUrl.href);
+};
 
 export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." }: SyncProgressProps) => {
   // ALL hooks must be declared before any early returns
@@ -82,8 +92,7 @@ export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." 
   const [showComplete, setShowComplete] = useState(false);
   const [autoStartRequested] = useState(() => {
     if (typeof window === "undefined") return false;
-    const value = new URLSearchParams(window.location.search).get("autostart");
-    return TRUTHY_QUERY_VALUES.has(value?.trim().toLowerCase() ?? "");
+    return isAutostartUrl(window.location);
   });
   const didAutoStart = useRef(false);
 
@@ -99,6 +108,7 @@ export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." 
     didAutoStart.current = true;
     const timer = window.setTimeout(() => {
       void setIsInitingSystem(false);
+      replaceAutostartUrl();
     }, 300);
 
     return () => window.clearTimeout(timer);

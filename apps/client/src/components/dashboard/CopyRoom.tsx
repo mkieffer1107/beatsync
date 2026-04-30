@@ -1,4 +1,5 @@
 "use client";
+import { stripAutostartFromRoomUrl } from "@/lib/autostart";
 import { cn } from "@/lib/utils";
 import { useRoomStore } from "@/store/room";
 import { Check, Copy, Link, QrCode } from "lucide-react";
@@ -18,9 +19,9 @@ export const RoomQRCode = () => {
   const roomUrl = (() => {
     if (typeof window === "undefined") return "";
     const url = new URL(window.location.href);
-    url.searchParams.delete("admin");
-    url.searchParams.delete("autostart");
-    return url.toString();
+    const strippedUrl = stripAutostartFromRoomUrl(url);
+    strippedUrl.searchParams.delete("admin");
+    return strippedUrl.toString();
   })();
 
   // Generate QR code when dialog opens

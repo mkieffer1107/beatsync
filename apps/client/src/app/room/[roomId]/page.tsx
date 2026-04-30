@@ -1,8 +1,4 @@
-import { NewSyncer } from "@/components/NewSyncer";
-import { DEMO_ROOM_ID, IS_DEMO_MODE } from "@/lib/demo";
-import { validateFullRoomId } from "@/lib/room";
-import { IS_SINGLE_ROOM_MODE, SINGLE_ROOM_ID } from "@/lib/singleRoom";
-import { redirect } from "next/navigation";
+import { RoomPage } from "@/app/room/RoomPage";
 
 // Force dynamic rendering and disable caching
 export const dynamic = "force-dynamic";
@@ -11,24 +7,5 @@ export const revalidate = 0;
 export default async function Page({ params }: { params: Promise<{ roomId: string }> }) {
   const { roomId } = await params;
 
-  if (IS_DEMO_MODE && roomId !== DEMO_ROOM_ID) {
-    redirect("/");
-  }
-
-  if (!IS_DEMO_MODE && IS_SINGLE_ROOM_MODE && roomId !== SINGLE_ROOM_ID) {
-    redirect(`/room/${SINGLE_ROOM_ID}`);
-  }
-
-  if (!validateFullRoomId(roomId)) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen gap-2">
-        <div>
-          Invalid room ID: <span className="font-bold">{roomId}</span>.
-        </div>
-        <div className="text-sm text-gray-500">Please enter a valid 6-digit numeric code.</div>
-      </div>
-    );
-  }
-
-  return <NewSyncer roomId={roomId} />;
+  return <RoomPage roomId={roomId} />;
 }
