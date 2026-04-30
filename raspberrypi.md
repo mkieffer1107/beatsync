@@ -192,7 +192,9 @@ set `BEATSYNC_DOMAIN` or `BEATSYNC_SITE_URL` before launching if your Caddy
 hostname is different. If Chromium is installed under a custom command, set
 `CHROMIUM_BIN`. The launcher defaults the browser display to `:0` when started
 from SSH and prefers `/usr/lib/chromium/chromium` to avoid stale Chromium wrapper
-flags. Additional Chromium flags can be passed with `CHROMIUM_FLAGS`.
+flags. Additional Chromium flags can be passed with `CHROMIUM_FLAGS`. The
+launcher uses Chromium's basic password store and closes keyring prompts so
+kiosk startup is not blocked.
 
 `bun run lan:prod` reads these production env files:
 

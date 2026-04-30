@@ -70,7 +70,8 @@ bun run lan:prod --single-room --admin-all --open-site
 `BEATSYNC_SITE_URL` if your Caddy hostname is different. If Chromium is installed
 under a custom command, set `CHROMIUM_BIN`; on Raspberry Pi OS, the launcher
 prefers `/usr/lib/chromium/chromium` to avoid stale wrapper flags. Additional
-Chromium flags can be passed with `CHROMIUM_FLAGS`.
+Chromium flags can be passed with `CHROMIUM_FLAGS`. The launcher uses Chromium's
+basic password store and closes keyring prompts so kiosk startup is not blocked.
 
 Run the following commands to start the server and client:
 

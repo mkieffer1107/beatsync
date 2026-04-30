@@ -144,6 +144,21 @@ resolve_site_base_url() {
   printf "http://%s" "${BEATSYNC_DOMAIN:-vibe.mathnasium.pro}"
 }
 
+close_keyring_prompts() {
+  pkill -u "$(id -u)" -f "gcr-prompter" >/dev/null 2>&1 || true
+}
+
+watch_for_keyring_prompts() {
+  (
+    local attempt=1
+    while [ "$attempt" -le 20 ]; do
+      close_keyring_prompts
+      attempt=$((attempt + 1))
+      sleep 0.5
+    done
+  ) &
+}
+
 open_site_when_ready() {
   local url="$1"
   local browser_bin="$2"
@@ -161,6 +176,8 @@ open_site_when_ready() {
     while [ "$attempt" -le 90 ]; do
       if curl -fsSL -o /dev/null "$url"; then
         echo "[open-site] opening $url"
+        close_keyring_prompts
+        watch_for_keyring_prompts
 
         local browser_args=(
           --ozone-platform=x11
@@ -168,6 +185,7 @@ open_site_when_ready() {
           --disable-dev-shm-usage
           --no-first-run
           --disable-session-crashed-bubble
+          --password-store=basic
           "--user-data-dir=$chromium_user_data_dir"
         )
 
