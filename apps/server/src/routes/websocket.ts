@@ -1,4 +1,5 @@
 import { DEMO_ROOM_ID, IS_DEMO_MODE, isValidAdminSecret } from "@/demo";
+import { isAdminAllMode } from "@/config";
 import { observePublicBaseUrl } from "@/lib/r2";
 import { errorResponse } from "@/utils/responses";
 import type { BunServer, WSData } from "@/utils/websocket";
@@ -32,8 +33,8 @@ export const handleWebSocketUpgrade = (req: Request, server: BunServer) => {
     return errorResponse(`Only room ${DEMO_ROOM_ID} is available in demo mode`);
   }
 
-  // Check if client provided valid admin secret
-  const isAdmin = IS_DEMO_MODE && isValidAdminSecret(adminSecret);
+  // Admin-all mode grants admin to everyone; demo mode also accepts an admin secret.
+  const isAdmin = isAdminAllMode() || (IS_DEMO_MODE && isValidAdminSecret(adminSecret));
 
   const isCreator = !IS_DEMO_MODE && !!CREATOR_SECRET && creatorSecret === CREATOR_SECRET;
 

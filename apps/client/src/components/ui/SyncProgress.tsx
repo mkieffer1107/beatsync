@@ -3,7 +3,7 @@
 import { SOCIAL_LINKS } from "@/constants";
 import { MAX_NTP_MEASUREMENTS, useGlobalStore } from "@/store/global";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const WS_STATUS_COLORS = {
   connected: "34,197,94",
@@ -63,6 +63,7 @@ const OuterModal = ({ children }: { children: React.ReactNode }) => {
 
 const PILL_COUNT = 8;
 const MEASUREMENTS_PER_PILL = MAX_NTP_MEASUREMENTS / PILL_COUNT;
+const TRUTHY_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
 
 export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." }: SyncProgressProps) => {
   // ALL hooks must be declared before any early returns
@@ -78,12 +79,29 @@ export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." 
   const wsReadyState = useGlobalStore((state) => state.socket?.readyState ?? -1);
 
   const [showComplete, setShowComplete] = useState(false);
+  const [autoStartRequested] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const value = new URLSearchParams(window.location.search).get("autostart");
+    return TRUTHY_QUERY_VALUES.has(value?.trim().toLowerCase() ?? "");
+  });
+  const didAutoStart = useRef(false);
 
   useEffect(() => {
     if (!isSyncComplete) return;
     const timer = setTimeout(() => setShowComplete(true), 100);
     return () => clearTimeout(timer);
   }, [isSyncComplete]);
+
+  useEffect(() => {
+    if (!autoStartRequested || !showComplete || hasUserStartedSystem || didAutoStart.current) return;
+
+    didAutoStart.current = true;
+    const timer = window.setTimeout(() => {
+      void setIsInitingSystem(false);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [autoStartRequested, hasUserStartedSystem, setIsInitingSystem, showComplete]);
 
   const probeStats = useGlobalStore((state) => state.probeStats);
 

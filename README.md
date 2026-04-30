@@ -12,7 +12,6 @@ https://github.com/user-attachments/assets/2aa385a7-2a07-4ab5-80b1-fda553efc57b
 - **Polished interface**: Smooth loading states, status indicators, and all UI elements come built-in
 - **Self-hostable**: Run your own instance with a few commands
 
-
 > [!NOTE]
 > Beatsync is in early development. Mobile support is working, but experimental. Please consider creating an issue or contributing with a PR if you run into problems!
 
@@ -51,6 +50,25 @@ For a one-room LAN setup, use `bun run lan:prod --single-room` or
 `bun run lan:prod:single-room`. That builds the client so the root URL redirects
 to `/room/123456`; use `--single-room=654321` if you want a different 6-digit
 room.
+
+To make every joining user an admin in the production LAN stack, add
+`--admin-all`. Flags can be combined, for example:
+
+```sh
+bun run lan:prod --admin-all --single-room
+```
+
+On a Raspberry Pi desktop, add `--open-site` with `--single-room` to open
+Chromium directly to the room and auto-enter the main queue UI after sync:
+
+```sh
+bun run lan:prod --single-room --admin-all --open-site
+```
+
+`--open-site` requires `--single-room`. It opens
+`http://vibe.mathnasium.pro` by default; set `BEATSYNC_DOMAIN` or
+`BEATSYNC_SITE_URL` if your Caddy hostname is different. If Chromium is installed
+under a custom command, set `CHROMIUM_BIN`.
 
 Run the following commands to start the server and client:
 

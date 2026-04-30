@@ -19,6 +19,7 @@ export const RoomQRCode = () => {
     if (typeof window === "undefined") return "";
     const url = new URL(window.location.href);
     url.searchParams.delete("admin");
+    url.searchParams.delete("autostart");
     return url.toString();
   })();
 

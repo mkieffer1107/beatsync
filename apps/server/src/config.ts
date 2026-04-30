@@ -9,6 +9,22 @@ export const MIN_SCHEDULE_TIME_MS = 400; // Minimum scheduling delay
 export const DEFAULT_CLIENT_RTT_MS = 0; // Default RTT when no clients or initial value
 const CAP_SCHEDULE_TIME_MS = 3_000; // Maximum scheduling delay
 
+function isTruthy(value: string | undefined): boolean {
+  switch (value?.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function isAdminAllMode(): boolean {
+  return isTruthy(process.env.ADMIN_ALL) || isTruthy(process.env.BEATSYNC_ADMIN_ALL);
+}
+
 /**
  * Calculate dynamic scheduling delay based on maximum client RTT
  * @param maxRTT Maximum RTT among all clients in milliseconds

@@ -178,6 +178,20 @@ Use `bun run lan:prod` when you want the simplest Pi command. It runs `bun insta
 builds the workspace, validates the checked-in `Caddyfile`, and then starts the
 client, server, and Caddy together.
 
+For a kiosk-style Pi that should open the room locally in Chromium, combine
+single-room mode with `--open-site`:
+
+```bash
+bun run lan:prod --single-room --admin-all --open-site
+```
+
+`--open-site` only works with an explicit `--single-room` flag. It opens the
+single room and automatically continues past the "Synchronization Complete"
+screen into the main queue UI. By default it opens `http://vibe.mathnasium.pro`;
+set `BEATSYNC_DOMAIN` or `BEATSYNC_SITE_URL` before launching if your Caddy
+hostname is different. If Chromium is installed under a custom command, set
+`CHROMIUM_BIN`.
+
 `bun run lan:prod` reads these production env files:
 
 - `apps/server/.env.production`

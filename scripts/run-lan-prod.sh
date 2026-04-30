@@ -8,15 +8,19 @@ CLIENT_ENV_FILE="$ROOT_DIR/apps/client/.env.production"
 DEFAULT_SINGLE_ROOM_ID="123456"
 SINGLE_ROOM_FLAG_REQUESTED=0
 SINGLE_ROOM_FLAG_ID=""
+ADMIN_ALL_FLAG_REQUESTED=0
+OPEN_SITE_FLAG_REQUESTED=0
 
 usage() {
   cat <<EOF
-Usage: $0 [--single-room] [--single-room-id ROOM_ID]
+Usage: $0 [--single-room] [--single-room-id ROOM_ID] [--admin-all] [--open-site]
 
 Options:
   --single-room              Redirect the LAN root URL to /room/$DEFAULT_SINGLE_ROOM_ID.
   --single-room=ROOM_ID      Redirect the LAN root URL to the given 6-digit room.
   --single-room-id ROOM_ID   Same as --single-room=ROOM_ID.
+  --admin-all                Make every joining client an admin.
+  --open-site                Open Chromium to the single room and auto-start the room UI.
 EOF
 }
 
@@ -57,6 +61,14 @@ parse_args() {
         SINGLE_ROOM_FLAG_ID="$2"
         shift 2
         ;;
+      --admin-all)
+        ADMIN_ALL_FLAG_REQUESTED=1
+        shift
+        ;;
+      --open-site)
+        OPEN_SITE_FLAG_REQUESTED=1
+        shift
+        ;;
       -h | --help)
         usage
         exit 0
@@ -92,10 +104,71 @@ load_env_file() {
   set +a
 }
 
+resolve_chromium_bin() {
+  if [ -n "${CHROMIUM_BIN:-}" ]; then
+    if command -v "$CHROMIUM_BIN" >/dev/null 2>&1; then
+      command -v "$CHROMIUM_BIN"
+      return
+    fi
+
+    return 1
+  fi
+
+  local candidate
+  for candidate in chromium-browser chromium google-chrome-stable google-chrome; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return
+    fi
+  done
+
+  return 1
+}
+
+resolve_site_base_url() {
+  if [ -n "${BEATSYNC_SITE_URL:-}" ]; then
+    printf "%s" "${BEATSYNC_SITE_URL%/}"
+    return
+  fi
+
+  printf "http://%s" "${BEATSYNC_DOMAIN:-vibe.mathnasium.pro}"
+}
+
+open_site_when_ready() {
+  local url="$1"
+  local browser_bin="$2"
+
+  (
+    echo "[open-site] waiting for $url"
+
+    local attempt=1
+    while [ "$attempt" -le 90 ]; do
+      if curl -fsSL -o /dev/null "$url"; then
+        echo "[open-site] opening $url"
+        "$browser_bin" --new-window "$url" >/dev/null 2>&1 || {
+          echo "[open-site] failed to launch Chromium with $browser_bin" >&2
+        }
+        return
+      fi
+
+      attempt=$((attempt + 1))
+      sleep 1
+    done
+
+    echo "[open-site] timed out waiting for $url" >&2
+  ) &
+}
+
 parse_args "$@"
 
 if [ "$SINGLE_ROOM_FLAG_ID" != "" ] && ! validate_room_id "$SINGLE_ROOM_FLAG_ID"; then
   echo "Invalid single-room ID: $SINGLE_ROOM_FLAG_ID. Expected a 6-digit numeric room code." >&2
+  exit 1
+fi
+
+if [ "$OPEN_SITE_FLAG_REQUESTED" -eq 1 ] && [ "$SINGLE_ROOM_FLAG_REQUESTED" -ne 1 ]; then
+  echo "--open-site requires --single-room or --single-room=ROOM_ID." >&2
+  usage >&2
   exit 1
 fi
 
@@ -113,6 +186,10 @@ if [ "$SINGLE_ROOM_FLAG_REQUESTED" -eq 1 ]; then
   export NEXT_PUBLIC_SINGLE_ROOM_ID="${SINGLE_ROOM_FLAG_ID:-$DEFAULT_SINGLE_ROOM_ID}"
 fi
 
+if [ "$ADMIN_ALL_FLAG_REQUESTED" -eq 1 ]; then
+  export ADMIN_ALL=1
+fi
+
 if is_truthy "${NEXT_PUBLIC_SINGLE_ROOM_MODE:-}"; then
   export NEXT_PUBLIC_SINGLE_ROOM_MODE=1
   export NEXT_PUBLIC_SINGLE_ROOM_ID="${NEXT_PUBLIC_SINGLE_ROOM_ID:-$DEFAULT_SINGLE_ROOM_ID}"
@@ -125,6 +202,25 @@ if is_truthy "${NEXT_PUBLIC_SINGLE_ROOM_MODE:-}"; then
   echo "[mode] single-room mode enabled: / redirects to /room/$NEXT_PUBLIC_SINGLE_ROOM_ID"
 fi
 
+if is_truthy "${ADMIN_ALL:-}"; then
+  export ADMIN_ALL=1
+  echo "[mode] admin-all mode enabled: every joining client is an admin"
+fi
+
+OPEN_SITE_URL=""
+OPEN_SITE_BROWSER_BIN=""
+
+if [ "$OPEN_SITE_FLAG_REQUESTED" -eq 1 ]; then
+  require_cmd curl
+  OPEN_SITE_BROWSER_BIN="$(resolve_chromium_bin)" || {
+    echo "Missing Chromium browser. Install chromium-browser/chromium or set CHROMIUM_BIN." >&2
+    exit 1
+  }
+
+  OPEN_SITE_URL="$(resolve_site_base_url)/room/$NEXT_PUBLIC_SINGLE_ROOM_ID?autostart=1"
+  echo "[mode] open-site enabled: Chromium will open $OPEN_SITE_URL"
+fi
+
 echo "[setup] installing workspace dependencies"
 bun install
 
@@ -135,4 +231,8 @@ echo "[caddy] validating config"
 caddy validate --config "$ROOT_DIR/Caddyfile"
 
 echo "[run] starting production LAN stack"
+if [ "$OPEN_SITE_URL" != "" ]; then
+  open_site_when_ready "$OPEN_SITE_URL" "$OPEN_SITE_BROWSER_BIN"
+fi
+
 exec "$ROOT_DIR/scripts/run-lan-stack.sh" start
