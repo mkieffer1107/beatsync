@@ -150,15 +150,37 @@ open_site_when_ready() {
   local display="${DISPLAY:-:0}"
   local xdg_runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   local browser_log="${TMPDIR:-/tmp}/beatsync-open-site-chromium.log"
+  local chromium_user_data_dir="${CHROMIUM_USER_DATA_DIR:-${TMPDIR:-/tmp}/beatsync-chromium-profile-$(id -u)}"
 
   (
     echo "[open-site] waiting for $url"
+
+    mkdir -p "$chromium_user_data_dir"
 
     local attempt=1
     while [ "$attempt" -le 90 ]; do
       if curl -fsSL -o /dev/null "$url"; then
         echo "[open-site] opening $url"
-        DISPLAY="$display" XDG_RUNTIME_DIR="$xdg_runtime_dir" "$browser_bin" --new-window "$url" >"$browser_log" 2>&1 || {
+
+        local browser_args=(
+          --ozone-platform=x11
+          --disable-gpu
+          --disable-dev-shm-usage
+          --no-first-run
+          --disable-session-crashed-bubble
+          "--user-data-dir=$chromium_user_data_dir"
+        )
+
+        if [ -n "${CHROMIUM_FLAGS:-}" ]; then
+          local extra_browser_args=()
+          # shellcheck disable=SC2206
+          extra_browser_args=($CHROMIUM_FLAGS)
+          browser_args+=("${extra_browser_args[@]}")
+        fi
+
+        browser_args+=(--new-window "$url")
+
+        DISPLAY="$display" XDG_RUNTIME_DIR="$xdg_runtime_dir" "$browser_bin" "${browser_args[@]}" >"$browser_log" 2>&1 || {
           echo "[open-site] failed to launch Chromium with $browser_bin" >&2
           sed -n "1,80p" "$browser_log" >&2
         }

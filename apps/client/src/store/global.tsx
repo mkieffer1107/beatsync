@@ -815,12 +815,15 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       });
     },
 
-    setIsInitingSystem: async (isIniting) => {
-      // When initialization is complete (isIniting = false), check if we need to resume audio
-      if (!isIniting) {
-        // Mark that user has started the system
-        set({ hasUserStartedSystem: true });
+    setIsInitingSystem: (isIniting) => {
+      if (isIniting) {
+        set({ isInitingSystem: true });
+        return;
+      }
 
+      set({ isInitingSystem: false, hasUserStartedSystem: true });
+
+      void (async () => {
         try {
           await audioContextManager.resume();
           console.log("AudioContext resumed via user gesture");
@@ -828,17 +831,18 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
           console.warn("Failed to resume AudioContext", err);
         }
 
-        const { socket } = getSocket(get());
+        try {
+          const { socket } = getSocket(get());
 
-        // Request sync with room (catches up playback state if a track is playing)
-        sendWSRequest({
-          ws: socket,
-          request: { type: ClientActionEnum.enum.SYNC },
-        });
-      }
-
-      // Update the initialization state
-      set({ isInitingSystem: isIniting });
+          // Request sync with room (catches up playback state if a track is playing)
+          sendWSRequest({
+            ws: socket,
+            request: { type: ClientActionEnum.enum.SYNC },
+          });
+        } catch (err) {
+          console.warn("Failed to request playback sync", err);
+        }
+      })();
     },
 
     /**

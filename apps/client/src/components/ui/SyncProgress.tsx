@@ -69,6 +69,7 @@ export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." 
   // ALL hooks must be declared before any early returns
   const measurementCount = useGlobalStore((state) => state.syncMeasurements.length);
   const isSyncComplete = useGlobalStore((state) => state.isSynced);
+  const isInitingSystem = useGlobalStore((state) => state.isInitingSystem);
   const setIsInitingSystem = useGlobalStore((state) => state.setIsInitingSystem);
   const hasUserStartedSystem = useGlobalStore((state) => state.hasUserStartedSystem);
   const roundTripEstimate = useGlobalStore((state) => state.roundTripEstimate);
@@ -287,7 +288,7 @@ export const SyncProgress = ({ isLoading = false, loadingMessage = "Loading..." 
   }
 
   if (showComplete) {
-    if (hasUserStartedSystem) {
+    if (hasUserStartedSystem && !isInitingSystem) {
       return null;
     }
 

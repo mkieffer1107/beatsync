@@ -69,7 +69,8 @@ bun run lan:prod --single-room --admin-all --open-site
 `http://vibe.mathnasium.pro` by default; set `BEATSYNC_DOMAIN` or
 `BEATSYNC_SITE_URL` if your Caddy hostname is different. If Chromium is installed
 under a custom command, set `CHROMIUM_BIN`; on Raspberry Pi OS, the launcher
-prefers `/usr/lib/chromium/chromium` to avoid stale wrapper flags.
+prefers `/usr/lib/chromium/chromium` to avoid stale wrapper flags. Additional
+Chromium flags can be passed with `CHROMIUM_FLAGS`.
 
 Run the following commands to start the server and client:
 
