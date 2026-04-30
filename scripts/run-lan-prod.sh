@@ -106,6 +106,11 @@ load_env_file() {
 
 resolve_chromium_bin() {
   if [ -n "${CHROMIUM_BIN:-}" ]; then
+    if [ -x "$CHROMIUM_BIN" ]; then
+      printf "%s" "$CHROMIUM_BIN"
+      return
+    fi
+
     if command -v "$CHROMIUM_BIN" >/dev/null 2>&1; then
       command -v "$CHROMIUM_BIN"
       return
@@ -115,7 +120,12 @@ resolve_chromium_bin() {
   fi
 
   local candidate
-  for candidate in chromium-browser chromium google-chrome-stable google-chrome; do
+  for candidate in /usr/lib/chromium/chromium chromium-browser chromium google-chrome-stable google-chrome; do
+    if [ -x "$candidate" ]; then
+      printf "%s" "$candidate"
+      return
+    fi
+
     if command -v "$candidate" >/dev/null 2>&1; then
       command -v "$candidate"
       return
@@ -137,6 +147,9 @@ resolve_site_base_url() {
 open_site_when_ready() {
   local url="$1"
   local browser_bin="$2"
+  local display="${DISPLAY:-:0}"
+  local xdg_runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  local browser_log="${TMPDIR:-/tmp}/beatsync-open-site-chromium.log"
 
   (
     echo "[open-site] waiting for $url"
@@ -145,8 +158,9 @@ open_site_when_ready() {
     while [ "$attempt" -le 90 ]; do
       if curl -fsSL -o /dev/null "$url"; then
         echo "[open-site] opening $url"
-        "$browser_bin" --new-window "$url" >/dev/null 2>&1 || {
+        DISPLAY="$display" XDG_RUNTIME_DIR="$xdg_runtime_dir" "$browser_bin" --new-window "$url" >"$browser_log" 2>&1 || {
           echo "[open-site] failed to launch Chromium with $browser_bin" >&2
+          sed -n "1,80p" "$browser_log" >&2
         }
         return
       fi

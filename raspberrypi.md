@@ -190,7 +190,9 @@ single room and automatically continues past the "Synchronization Complete"
 screen into the main queue UI. By default it opens `http://vibe.mathnasium.pro`;
 set `BEATSYNC_DOMAIN` or `BEATSYNC_SITE_URL` before launching if your Caddy
 hostname is different. If Chromium is installed under a custom command, set
-`CHROMIUM_BIN`.
+`CHROMIUM_BIN`. The launcher defaults the browser display to `:0` when started
+from SSH and prefers `/usr/lib/chromium/chromium` to avoid stale Chromium wrapper
+flags.
 
 `bun run lan:prod` reads these production env files:
 
