@@ -200,6 +200,16 @@
       height: 30%;
     }
   }
+
+  --animate-marquee-scroll: marquee-scroll 12s linear infinite;
+  @keyframes marquee-scroll {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
 }
 
 @theme inline {

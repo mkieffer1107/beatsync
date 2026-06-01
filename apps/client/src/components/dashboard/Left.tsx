@@ -12,6 +12,7 @@ import { ConnectedUsersList } from "./ConnectedUsersList";
 import { RoomQRCode } from "./CopyRoom";
 import { GlobalVolumeControl } from "./GlobalVolumeControl";
 import { MobileNudgeControl } from "./MobileNudgeControl";
+import { DesktopTimingTools } from "./DesktopTimingTools";
 import { PlaybackPermissions } from "./PlaybackPermissions";
 
 interface LeftProps {
@@ -81,6 +82,8 @@ export const Left = ({ className }: LeftProps) => {
 
       {/* Connected Users List */}
       <ConnectedUsersList />
+
+      <DesktopTimingTools />
 
       {/* Playback Permissions */}
 

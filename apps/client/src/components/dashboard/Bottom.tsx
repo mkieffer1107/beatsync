@@ -1,19 +1,19 @@
 import { motion } from "motion/react";
 import { Player } from "../room/Player";
 import { GlobalVolumeControl } from "./GlobalVolumeControl";
-import { NudgeControl } from "./NudgeControl";
+import { NowPlaying } from "./NowPlaying";
 
 export const Bottom = () => {
   return (
-    <motion.div className="flex-shrink-0 border-t border-neutral-800/50 bg-neutral-900/10 backdrop-blur-lg p-4 pb-safe-plus-4 shadow-[0_-5px_15px_rgba(0,0,0,0.1)] z-10 relative">
-      <div className="flex items-center justify-between max-w-7xl mx-auto">
-        <div className="hidden lg:block absolute left-6">
-          <NudgeControl />
+    <motion.div className="relative z-10 shrink-0 border-t border-neutral-800/50 bg-neutral-900/10 p-4 pb-safe-plus-4 shadow-[0_-5px_15px_rgba(0,0,0,0.1)] backdrop-blur-lg">
+      <div className="relative mx-auto flex max-w-7xl items-center justify-between">
+        <div className="absolute left-6 hidden lg:block">
+          <NowPlaying />
         </div>
-        <div className="flex-1 max-w-3xl mx-auto">
+        <div className="mx-auto max-w-3xl flex-1">
           <Player />
         </div>
-        <div className="hidden lg:block absolute right-6">
+        <div className="absolute right-6 hidden lg:block">
           <GlobalVolumeControl />
         </div>
       </div>
