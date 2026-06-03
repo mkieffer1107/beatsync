@@ -5,6 +5,7 @@ import {
   PauseActionSchema,
   PlayActionSchema,
   SetPlaybackControlsSchema,
+  SetShuffleSchema,
 } from "./WSRequest";
 import { AudioSourceSchema, ChatMessageSchema, PlaylistSchema, PositionSchema } from "./basic";
 
@@ -65,6 +66,7 @@ const RoomEventSchema = z.object({
     SetAudioSourcesSchema,
     SetPlaylistsSchema,
     SetPlaybackControlsSchema,
+    SetShuffleSchema,
     ChatUpdateSchema,
     LoadAudioSourceSchema,
   ]),
@@ -73,10 +75,7 @@ const RoomEventSchema = z.object({
 // SCHEDULED ACTIONS
 const SpatialConfigSchema = z.object({
   type: z.literal("SPATIAL_CONFIG"),
-  gains: z.record(
-    z.string(),
-    z.object({ gain: z.number().min(0).max(1), rampTime: z.number() })
-  ),
+  gains: z.record(z.string(), z.object({ gain: z.number().min(0).max(1), rampTime: z.number() })),
   listeningSource: PositionSchema,
 });
 

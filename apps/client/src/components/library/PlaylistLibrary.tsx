@@ -312,7 +312,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
   const playbackContext = useGlobalStore((state) => state.playbackContext);
   const isShuffled = useGlobalStore((state) => state.isShuffled);
   const setPlaybackContext = useGlobalStore((state) => state.setPlaybackContext);
-  const setShuffleEnabled = useGlobalStore((state) => state.setShuffleEnabled);
+  const sendShuffleUpdate = useGlobalStore((state) => state.sendShuffleUpdate);
   const activeStreamJobs = useGlobalStore((state) => state.activeStreamJobs);
   const socket = useGlobalStore((state) => state.socket);
   const canMutate = useCanMutate();
@@ -458,7 +458,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     }
 
     setPlaybackContext(context);
-    setShuffleEnabled(shuffle);
+    sendShuffleUpdate(shuffle);
     changeAudioSource(targetUrl);
     broadcastPlay(0);
   };
@@ -474,7 +474,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     }
 
     setPlaybackContext(context);
-    setShuffleEnabled(false);
+    sendShuffleUpdate(false);
 
     if (selectedAudioUrl === trackUrl) {
       if (isPlaying) {

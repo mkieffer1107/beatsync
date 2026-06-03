@@ -3,7 +3,7 @@ import { audioContextManager, isAudioContextPaused } from "@/lib/audioContextMan
 import { getClientId } from "@/lib/clientId";
 import { getKickBuffer } from "@/components/dashboard/Metronome";
 import { IS_DEMO_MODE } from "@/lib/demo";
-import { canDriveAutoplay, resolvePlaybackOrder } from "@/lib/playbackOrder";
+import { canDriveAutoplay, getNextPlaybackTrack, resolvePlaybackOrder } from "@/lib/playbackOrder";
 import {
   derivePlaylistsFromAudioSources,
   findPlaylistIdForTrack,
@@ -225,6 +225,7 @@ interface GlobalState extends GlobalStateValues {
   setPlaybackContext: (context: PlaybackContext | null) => void;
   toggleShuffle: () => void;
   setShuffleEnabled: (enabled: boolean) => void;
+  sendShuffleUpdate: (enabled: boolean) => void;
   skipToNextTrack: (isAutoplay?: boolean) => void;
   skipToPreviousTrack: () => void;
   getCurrentGainValue: () => number;
@@ -1535,15 +1536,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       const currentIndex = playbackOrder.indexOf(selectedAudioId);
       if (currentIndex < 0) return;
 
-      let nextAudioId: string | null = null;
-      if (isShuffled) {
-        const candidateUrls = playbackOrder.filter((url) => url !== selectedAudioId);
-        nextAudioId = candidateUrls[Math.floor(Math.random() * candidateUrls.length)] ?? null;
-      } else if (playbackContext) {
-        nextAudioId = playbackOrder[currentIndex + 1] ?? null;
-      } else {
-        nextAudioId = playbackOrder[(currentIndex + 1) % playbackOrder.length] ?? null;
-      }
+      const nextAudioId = getNextPlaybackTrack({
+        playbackOrder,
+        selectedAudioUrl: selectedAudioId,
+        isShuffled,
+        allowWrap: !playbackContext,
+      });
 
       if (!nextAudioId) {
         if (isAutoplay) {
@@ -1602,9 +1600,29 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       }
     },
 
-    toggleShuffle: () => set((state) => ({ isShuffled: !state.isShuffled })),
+    toggleShuffle: () => {
+      const state = get();
+      state.sendShuffleUpdate(!state.isShuffled);
+    },
 
     setShuffleEnabled: (enabled) => set({ isShuffled: enabled }),
+
+    sendShuffleUpdate: (enabled) => {
+      set({ isShuffled: enabled });
+
+      const { socket } = get();
+      if (!socket || socket.readyState !== 1) {
+        return;
+      }
+
+      sendWSRequest({
+        ws: socket,
+        request: {
+          type: ClientActionEnum.enum.SET_SHUFFLE,
+          enabled,
+        },
+      });
+    },
 
     setIsSpatialAudioEnabled: (isEnabled) => set({ isSpatialAudioEnabled: isEnabled }),
 

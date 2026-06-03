@@ -24,6 +24,7 @@ export const ClientActionEnum = z.enum([
   "SYNC", // Client joins late, requests sync
   "SET_ADMIN", // Set admin status
   "SET_PLAYBACK_CONTROLS", // Set playback controls
+  "SET_SHUFFLE", // Set room shuffle mode
   "SEND_IP", // Send IP to server
   "LOAD_DEFAULT_TRACKS", // Load default tracks into empty queue
   "CLEAR_AUDIO_QUEUE", // Clear the room queue without deleting stored tracks
@@ -125,6 +126,11 @@ export type PlaybackControlsPermissionsType = z.infer<typeof PlaybackControlsPer
 export const SetPlaybackControlsSchema = z.object({
   type: z.literal(ClientActionEnum.enum.SET_PLAYBACK_CONTROLS),
   permissions: PlaybackControlsPermissionsEnum,
+});
+
+export const SetShuffleSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SET_SHUFFLE),
+  enabled: z.boolean(),
 });
 
 export const SendLocationSchema = z.object({
@@ -234,6 +240,7 @@ export const WSRequestSchema = z.discriminatedUnion("type", [
   ClientRequestSyncSchema,
   SetAdminSchema,
   SetPlaybackControlsSchema,
+  SetShuffleSchema,
   SendLocationSchema,
   LoadDefaultTracksSchema,
   ClearAudioQueueSchema,

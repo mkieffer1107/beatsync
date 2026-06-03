@@ -14,6 +14,7 @@ import { handleSendIp } from "@/websocket/handlers/handleSendIp";
 import { handleSetAdmin } from "@/websocket/handlers/handleSetAdmin";
 import { handleSetPlaybackControls } from "@/websocket/handlers/handleSetPlaybackControls";
 import { handleSetPlaylistTracks } from "@/websocket/handlers/handleSetPlaylistTracks";
+import { handleSetShuffle } from "@/websocket/handlers/handleSetShuffle";
 import { handleStreamMusic } from "@/websocket/handlers/handleStreamMusic";
 import { handleImportYoutube } from "@/websocket/handlers/handleImportYoutube";
 import { handleUpdatePlaylist } from "@/websocket/handlers/handleUpdatePlaylist";
@@ -104,6 +105,11 @@ export const WS_REGISTRY: WebsocketRegistry = {
   [ClientActionEnum.enum.SET_PLAYBACK_CONTROLS]: {
     handle: handleSetPlaybackControls,
     description: "Set playback controls for a room",
+  },
+
+  [ClientActionEnum.enum.SET_SHUFFLE]: {
+    handle: handleSetShuffle,
+    description: "Set room shuffle mode",
   },
 
   [ClientActionEnum.enum.SEND_IP]: {

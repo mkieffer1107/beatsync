@@ -19,6 +19,9 @@ void mock.module("@/utils/responses", () => ({
       broadcastMessages.push({ server, roomId, message });
     }
   ),
+  sendToClient: mock(({ ws, message }: { ws: ReturnType<typeof createMockWs>; message: WSBroadcastType }) => {
+    ws.send(JSON.stringify(message));
+  }),
   sendUnicast: mock(() => {
     /* noop */
   }),
@@ -122,5 +125,26 @@ describe("handleMessage", () => {
       throw new Error("Expected SET_AUDIO_SOURCES");
     }
     expect(queueBroadcast.message.event.sources).toEqual([]);
+  });
+
+  it("should update and broadcast room shuffle state", async () => {
+    const ws = createMockWs({ clientId: "client-1", roomId: ROOM_ID });
+    handleOpen(ws, server);
+
+    const room = globalManager.getRoom(ROOM_ID)!;
+    broadcastMessages = [];
+
+    await handleMessage(ws, JSON.stringify({ type: "SET_SHUFFLE", enabled: true }), server);
+
+    expect(room.getIsShuffled()).toBe(true);
+
+    const shuffleBroadcast = broadcastMessages.find(
+      (msg) => msg.message.type === "ROOM_EVENT" && msg.message.event.type === "SET_SHUFFLE"
+    );
+    expect(shuffleBroadcast).toBeTruthy();
+    if (shuffleBroadcast?.message.type !== "ROOM_EVENT" || shuffleBroadcast.message.event.type !== "SET_SHUFFLE") {
+      throw new Error("Expected SET_SHUFFLE");
+    }
+    expect(shuffleBroadcast.message.event.enabled).toBe(true);
   });
 });

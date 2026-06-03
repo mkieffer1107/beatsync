@@ -88,3 +88,36 @@ export const resolvePlaybackOrder = (
 
   return contextOrder;
 };
+
+export const getNextPlaybackTrack = ({
+  playbackOrder,
+  selectedAudioUrl,
+  isShuffled,
+  allowWrap,
+  random = Math.random,
+}: {
+  playbackOrder: string[];
+  selectedAudioUrl: string;
+  isShuffled: boolean;
+  allowWrap: boolean;
+  random?: () => number;
+}) => {
+  if (playbackOrder.length <= 1) {
+    return null;
+  }
+
+  const currentIndex = playbackOrder.indexOf(selectedAudioUrl);
+  if (currentIndex < 0) {
+    return null;
+  }
+
+  if (isShuffled) {
+    const candidateUrls = playbackOrder.filter((url) => url !== selectedAudioUrl);
+    const candidateIndex = Math.min(candidateUrls.length - 1, Math.max(0, Math.floor(random() * candidateUrls.length)));
+    return candidateUrls[candidateIndex] ?? null;
+  }
+
+  return allowWrap
+    ? (playbackOrder[(currentIndex + 1) % playbackOrder.length] ?? null)
+    : (playbackOrder[currentIndex + 1] ?? null);
+};

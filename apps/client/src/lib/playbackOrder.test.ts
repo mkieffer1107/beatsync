@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   canDriveAutoplay,
   getAutoplayDriverClientId,
+  getNextPlaybackTrack,
   getQueuePlaybackOrder,
   resolvePlaybackOrder,
   type PlaybackOrderStateLike,
@@ -85,5 +86,28 @@ describe("playbackOrder", () => {
 
     expect(getAutoplayDriverClientId(state)).toBe("client-1");
     expect(canDriveAutoplay(state)).toBe(false);
+  });
+
+  it("can pick a non-adjacent track when shuffle is enabled", () => {
+    expect(
+      getNextPlaybackTrack({
+        playbackOrder: ["track-1", "track-2", "track-3", "track-4"],
+        selectedAudioUrl: "track-1",
+        isShuffled: true,
+        allowWrap: true,
+        random: () => 0.5,
+      })
+    ).toBe("track-3");
+  });
+
+  it("advances sequentially only when shuffle is disabled", () => {
+    expect(
+      getNextPlaybackTrack({
+        playbackOrder: ["track-1", "track-2", "track-3"],
+        selectedAudioUrl: "track-1",
+        isShuffled: false,
+        allowWrap: true,
+      })
+    ).toBe("track-2");
   });
 });

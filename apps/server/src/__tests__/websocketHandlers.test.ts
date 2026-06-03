@@ -164,6 +164,29 @@ describe("WebSocket Handlers (Simplified Tests)", () => {
         "https://example.com/song1.mp3",
       ]);
     });
+
+    it("should send room shuffle state to newly joined client", () => {
+      const roomId = "shuffle-room";
+      const room = globalManager.getOrCreateRoom(roomId);
+      room.setShuffle(true);
+
+      const mockServer = createMockServer();
+      const ws = createMockWs({ clientId: "client-shuffle", username: "shuffleUser", roomId });
+
+      handleOpen(ws, mockServer);
+
+      const sentMessages = getWsSentMessages(ws);
+      const shuffleMessage = sentMessages.find((msg) => msg.type === "ROOM_EVENT" && msg.event?.type === "SET_SHUFFLE");
+
+      expect(shuffleMessage).toBeTruthy();
+
+      const msg = shuffleMessage!;
+      if (msg.type !== "ROOM_EVENT" || msg.event.type !== "SET_SHUFFLE") {
+        throw new Error("Expected SET_SHUFFLE");
+      }
+
+      expect(msg.event.enabled).toBe(true);
+    });
   });
 
   describe("Client State Management", () => {

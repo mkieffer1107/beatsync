@@ -36,6 +36,7 @@ interface RoomData {
   intervalId?: NodeJS.Timeout;
   listeningSource: PositionType;
   playbackControlsPermissions: PlaybackControlsPermissionsType;
+  isShuffled: boolean;
   globalVolume: number; // Master volume multiplier (0-1)
   lowPassFreq: number; // Low-pass filter cutoff frequency (20-20000 Hz)
 }
@@ -67,6 +68,7 @@ const RoomBackupSchema = z.object({
   clientDatas: z.array(ClientDataSchema),
   audioSources: z.array(AudioSourceSchema),
   playlists: z.array(PlaylistSchema).default([]),
+  isShuffled: z.boolean().default(false),
   globalVolume: z.number().min(0).max(1).default(1.0),
   lowPassFreq: z
     .number()
@@ -133,6 +135,7 @@ export class RoomManager {
   private onClientCountChange?: () => void;
   private playbackState: RoomPlaybackState = INITIAL_PLAYBACK_STATE;
   private playbackControlsPermissions: PlaybackControlsPermissionsType = "ADMIN_ONLY";
+  private isShuffled = false;
   private globalVolume = 1.0;
   private lowPassFreq: number = LOW_PASS_CONSTANTS.MAX_FREQ; // Default bypassed (full spectrum)
   private isMetronomeEnabled = false;
@@ -646,6 +649,10 @@ export class RoomManager {
     return this.playbackControlsPermissions;
   }
 
+  getIsShuffled(): boolean {
+    return this.isShuffled;
+  }
+
   getPlaybackState(): RoomPlaybackState {
     return this.playbackState;
   }
@@ -774,6 +781,10 @@ export class RoomManager {
     this.playbackControlsPermissions = permissions;
   }
 
+  setShuffle(enabled: boolean): void {
+    this.isShuffled = enabled;
+  }
+
   /**
    * Add an audio source to the room
    */
@@ -875,6 +886,7 @@ export class RoomManager {
       intervalId: this.intervalId,
       listeningSource: this.listeningSource,
       playbackControlsPermissions: this.playbackControlsPermissions,
+      isShuffled: this.isShuffled,
       globalVolume: this.globalVolume,
       lowPassFreq: this.lowPassFreq,
     };
@@ -1340,6 +1352,7 @@ export class RoomManager {
       clientDatas: Array.from(this.clientData.values()),
       audioSources: this.audioSources,
       playlists: this.getPlaylists(),
+      isShuffled: this.isShuffled,
       globalVolume: this.globalVolume,
       lowPassFreq: this.lowPassFreq,
       playbackState: this.playbackState,
@@ -1547,6 +1560,10 @@ export class RoomManager {
 
   restorePlaybackState(playbackState: RoomPlaybackState): void {
     this.playbackState = playbackState;
+  }
+
+  restoreShuffle(isShuffled: boolean): void {
+    this.isShuffled = isShuffled;
   }
 
   restorePlaylists(playlists: PlaylistInput[]): void {
