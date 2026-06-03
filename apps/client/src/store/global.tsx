@@ -12,7 +12,7 @@ import {
 } from "@/lib/playlistLibrary";
 import { getCachedAudioDuration, getStoredAudioDuration, primeAudioDuration } from "@/lib/audioDuration";
 import { getApiUrl } from "@/lib/urls";
-import { extractFileNameFromUrl, getAudioSourceDisplayName } from "@/lib/utils";
+import { getAudioSourceDisplayName } from "@/lib/utils";
 import {
   calculateOffsetEstimate,
   calculateWaitTimeMilliseconds,
@@ -58,6 +58,12 @@ interface AudioPlayerState {
   sourceNode: AudioBufferSourceNode;
   gainNode: GainNode;
 }
+
+type ScheduledPlayRequest = {
+  trackTimeSeconds: number;
+  targetServerTime: number;
+  audioSource: string;
+};
 
 enum AudioPlayerError {
   NotInitialized = "NOT_INITIALIZED",
@@ -196,7 +202,7 @@ interface GlobalState extends GlobalStateValues {
   setAdminStatus: (clientId: string, isAdmin: boolean) => void;
   changeAudioSource: (url: string) => boolean;
   findAudioIndexByUrl: (url: string) => number | null;
-  schedulePlay: (data: { trackTimeSeconds: number; targetServerTime: number; audioSource: string }) => void;
+  schedulePlay: (data: ScheduledPlayRequest) => void;
   schedulePause: (data: { targetServerTime: number }) => void;
   setSocket: (socket: WebSocket) => void;
   broadcastPlay: (trackTimeSeconds?: number) => void;
@@ -550,6 +556,48 @@ export const useCanMutate = () => {
 };
 
 export const useGlobalStore = create<GlobalState>((set, get) => {
+  let pendingScheduledPlay: ScheduledPlayRequest | null = null;
+  let pendingScheduledPlayRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const clearPendingScheduledPlay = (audioSource?: string) => {
+    if (audioSource && pendingScheduledPlay?.audioSource !== audioSource) {
+      return;
+    }
+
+    pendingScheduledPlay = null;
+    if (pendingScheduledPlayRetryTimeout) {
+      clearTimeout(pendingScheduledPlayRetryTimeout);
+      pendingScheduledPlayRetryTimeout = null;
+    }
+  };
+
+  const retryPendingScheduledPlayForUrl = (url: string) => {
+    const pending = pendingScheduledPlay;
+    if (!pending || pending.audioSource !== url) {
+      return;
+    }
+
+    clearPendingScheduledPlay(url);
+    queueMicrotask(() => {
+      get().schedulePlay(pending);
+    });
+  };
+
+  const queueScheduledPlayRetry = (data: ScheduledPlayRequest) => {
+    pendingScheduledPlay = data;
+    if (pendingScheduledPlayRetryTimeout) {
+      return;
+    }
+
+    pendingScheduledPlayRetryTimeout = setTimeout(() => {
+      const pending = pendingScheduledPlay;
+      pendingScheduledPlayRetryTimeout = null;
+      if (pending) {
+        get().schedulePlay(pending);
+      }
+    }, 500);
+  };
+
   // Helper function to manage LRU cache
   const addURLToLRU = (url: string) => {
     const state = get();
@@ -603,6 +651,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       if (existing && existing.status === "loaded") {
         // Update LRU queue when accessing an already loaded buffer
         addURLToLRU(url);
+        retryPendingScheduledPlayForUrl(url);
 
         const { socket } = getSocket(state);
         sendWSRequest({
@@ -646,6 +695,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       // Update LRU queue after successfully loading a new buffer
       addURLToLRU(url);
+      retryPendingScheduledPlayForUrl(url);
 
       // Send message to server that the source is loaded (re-read socket in case of reconnect during fetch)
       const { socket } = getSocket(get());
@@ -658,6 +708,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       });
     } catch (error) {
       console.error(`Failed to load audio source ${url}:`, error);
+      clearPendingScheduledPlay(url);
       // Update the source with error status
       set((currentState) => ({
         audioSources: currentState.audioSources.map((as) =>
@@ -915,6 +966,54 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       // Simulate scheduling delay for testing:
       // await new Promise((resolve) => setTimeout(resolve, 500));
 
+      // Find the index of the audio to play
+      const audioIndex = state.findAudioIndexByUrl(data.audioSource);
+
+      // Check if track doesn't exist at all
+      if (audioIndex === null) {
+        if (state.isPlaying) {
+          state.pauseAudio({ when: 0 });
+        }
+        console.warn(`Cannot play audio: Track not found in audioSources: ${data.audioSource}`);
+        return;
+      }
+
+      const audioSourceState = state.audioSources[audioIndex];
+
+      // Update the selected audio ID before loading/retry work so the UI reflects
+      // the room's current target track instead of sitting on the previous ended track.
+      if (data.audioSource !== state.selectedAudioUrl) {
+        const nextDuration =
+          audioSourceState.status === "loaded" && audioSourceState.buffer
+            ? audioSourceState.buffer.duration
+            : getStoredAudioDuration(audioSourceState.source) || getCachedAudioDuration(data.audioSource);
+
+        set({
+          selectedAudioUrl: data.audioSource,
+          selectedPlaylistId: findPlaylistIdForTrack(state.playlists, data.audioSource) ?? state.selectedPlaylistId,
+          currentTime: data.trackTimeSeconds,
+          playbackStartTime: 0,
+          playbackOffset: data.trackTimeSeconds,
+          ...(nextDuration > 0 ? { duration: nextDuration } : {}),
+        });
+      }
+
+      if (audioSourceState.status === "idle" || audioSourceState.status === "loading") {
+        if (audioSourceState.status === "idle") {
+          loadAudioSource(data.audioSource);
+        }
+
+        queueScheduledPlayRetry(data);
+
+        console.warn(`Cannot play audio yet: Track is ${audioSourceState.status}: ${data.audioSource}`);
+        const displayName = getAudioSourceDisplayName(audioSourceState.source);
+        toast.warning(`"${displayName}" is loading...`, { id: "schedulePlay" });
+
+        return;
+      }
+
+      clearPendingScheduledPlay(data.audioSource);
+
       let waitTimeSeconds = getWaitTimeSeconds(state, data.targetServerTime);
       const _olMs = getFilteredOutputLatencyMs();
       const _effectiveOffset = state.offsetEstimate + state.nudgeOffsetMs;
@@ -941,16 +1040,6 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
             `[Schedule] Missed by ${missedByMs.toFixed(0)}ms, rescheduling in ${retryDelayMs.toFixed(0)}ms at track position ${trackPositionAtRetry.toFixed(2)}s`
           );
 
-          // Update state and schedule on audio thread (sample-accurate)
-          if (data.audioSource !== state.selectedAudioUrl) {
-            set({
-              selectedAudioUrl: data.audioSource,
-              selectedPlaylistId: findPlaylistIdForTrack(state.playlists, data.audioSource) ?? state.selectedPlaylistId,
-            });
-          }
-          const audioIndex = state.findAudioIndexByUrl(data.audioSource);
-          if (audioIndex === null) return;
-
           const absoluteStartTime = audioContextManager.getContext().currentTime + retryDelayMs / 1000;
           state.playAudio({
             offset: trackPositionAtRetry,
@@ -967,28 +1056,6 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       }
 
       console.log(`Playing track ${data.audioSource} at ${data.trackTimeSeconds} seconds in ${waitTimeSeconds}`);
-
-      // Update the selected audio ID
-      if (data.audioSource !== state.selectedAudioUrl) {
-        set({
-          selectedAudioUrl: data.audioSource,
-          selectedPlaylistId: findPlaylistIdForTrack(state.playlists, data.audioSource) ?? state.selectedPlaylistId,
-        });
-      }
-
-      // Find the index of the audio to play
-      const audioIndex = state.findAudioIndexByUrl(data.audioSource);
-
-      // Check if track doesn't exist at all
-      if (audioIndex === null) {
-        if (state.isPlaying) {
-          state.pauseAudio({ when: 0 });
-        }
-        console.warn(`Cannot play audio: Track not found in audioSources: ${data.audioSource}`);
-        return;
-      }
-
-      const audioSourceState = state.audioSources[audioIndex];
 
       // Demo mode: kick-style synchronous play — no async, no indirection
       if (IS_DEMO_MODE && audioSourceState?.status === "loaded" && audioSourceState.buffer) {
@@ -1027,29 +1094,6 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         return;
       }
 
-      // Check if track exists but is still loading
-      if (audioSourceState?.status === "loading") {
-        if (state.isPlaying) {
-          state.pauseAudio({ when: 0 });
-        }
-
-        console.warn(`Cannot play audio: Track still loading: ${data.audioSource}`);
-        const displayName = audioSourceState
-          ? getAudioSourceDisplayName(audioSourceState.source)
-          : extractFileNameFromUrl(data.audioSource);
-        toast.warning(`"${displayName}" not loaded yet...`, { id: "schedulePlay" });
-
-        const { socket } = getSocket(state);
-        setTimeout(() => {
-          sendWSRequest({
-            ws: socket,
-            request: { type: ClientActionEnum.enum.SYNC },
-          });
-        }, 1000);
-
-        return;
-      }
-
       // Capture absolute start time NOW (synchronous) so async delays in playAudio don't shift it
       const absoluteStartTime = audioContextManager.getContext().currentTime + waitTimeSeconds;
 
@@ -1062,6 +1106,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
     },
 
     schedulePause: ({ targetServerTime }: { targetServerTime: number }) => {
+      clearPendingScheduledPlay();
       const state = get();
       const waitTimeSeconds = getWaitTimeSeconds(state, targetServerTime);
       console.log(`Pausing track in ${waitTimeSeconds}`);
@@ -1275,6 +1320,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       }
     },
     onConnectionReset: () => {
+      clearPendingScheduledPlay();
       const state = get();
 
       // Stop spatial audio if enabled
@@ -1393,28 +1439,9 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         // and the sourceNode that ended is the *current* sourceNode.
         // This prevents handlers from old nodes interfering after a quick skip.
         if (currentlyIsPlaying && currentPlayer?.sourceNode === newSourceNode) {
-          const { audioContext } = currentPlayer;
-          // Check if the buffer naturally reached its end
-          // Calculate the expected end time in the AudioContext timeline
-          const expectedEndTime =
-            currentState.playbackStartTime + (currentState.duration - currentState.playbackOffset);
-          // Use a tolerance for timing discrepancies (e.g., 0.5 seconds)
-          const endedNaturally = Math.abs(audioContext.currentTime - expectedEndTime) < 0.5;
-
-          if (endedNaturally) {
-            console.log("Track ended naturally, skipping to next via autoplay.");
-            // Set currentTime to duration, as playback fully completed
-            // We don't set isPlaying false here, let skipToNextTrack handle state transition
-            set({ currentTime: currentState.duration });
-            currentState.skipToNextTrack(true); // Trigger autoplay skip
-          } else {
-            console.log(
-              "onended fired but not deemed a natural end (likely manual stop/skip). State should be handled elsewhere."
-            );
-            // If stopped manually (pauseAudio) or skipped (setSelectedAudioId),
-            // those functions are responsible for setting isPlaying = false and currentTime.
-            // No action needed here for non-natural ends.
-          }
+          console.log("Track ended naturally, skipping to next via autoplay.");
+          set({ currentTime: currentState.duration });
+          currentState.skipToNextTrack(true);
         } else {
           console.log("onended fired but player was already stopped/paused or source node changed.");
         }
@@ -1905,6 +1932,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
     // Reset function to clean up state
     resetStore: () => {
+      clearPendingScheduledPlay();
       const state = get();
 
       // Stop any playing audio
