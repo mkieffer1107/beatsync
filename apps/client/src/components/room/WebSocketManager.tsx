@@ -231,7 +231,7 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
         } else if (event.type === "SET_PLAYBACK_CONTROLS") {
           setPlaybackControlsPermissions(event.permissions);
         } else if (event.type === "SET_SHUFFLE") {
-          setShuffleEnabled(event.enabled);
+          setShuffleEnabled(event.enabled, event.shuffleHistory);
         } else if (event.type === "CHAT_UPDATE") {
           // Handle chat messages
           setMessages(event.messages, event.isFullSync, event.newestId);

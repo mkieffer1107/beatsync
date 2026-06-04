@@ -94,12 +94,14 @@ export const getNextPlaybackTrack = ({
   selectedAudioUrl,
   isShuffled,
   allowWrap,
+  playedUrls = [],
   random = Math.random,
 }: {
   playbackOrder: string[];
   selectedAudioUrl: string;
   isShuffled: boolean;
   allowWrap: boolean;
+  playedUrls?: string[];
   random?: () => number;
 }) => {
   if (playbackOrder.length <= 1) {
@@ -113,8 +115,11 @@ export const getNextPlaybackTrack = ({
 
   if (isShuffled) {
     const candidateUrls = playbackOrder.filter((url) => url !== selectedAudioUrl);
-    const candidateIndex = Math.min(candidateUrls.length - 1, Math.max(0, Math.floor(random() * candidateUrls.length)));
-    return candidateUrls[candidateIndex] ?? null;
+    const playedUrlSet = new Set(playedUrls);
+    const unplayedCandidateUrls = candidateUrls.filter((url) => !playedUrlSet.has(url));
+    const shufflePool = unplayedCandidateUrls.length > 0 ? unplayedCandidateUrls : candidateUrls;
+    const candidateIndex = Math.min(shufflePool.length - 1, Math.max(0, Math.floor(random() * shufflePool.length)));
+    return shufflePool[candidateIndex] ?? null;
   }
 
   return allowWrap

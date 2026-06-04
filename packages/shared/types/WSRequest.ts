@@ -131,6 +131,7 @@ export const SetPlaybackControlsSchema = z.object({
 export const SetShuffleSchema = z.object({
   type: z.literal(ClientActionEnum.enum.SET_SHUFFLE),
   enabled: z.boolean(),
+  shuffleHistory: z.array(z.string()).optional(),
 });
 
 export const SendLocationSchema = z.object({

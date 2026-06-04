@@ -146,5 +146,6 @@ describe("handleMessage", () => {
       throw new Error("Expected SET_SHUFFLE");
     }
     expect(shuffleBroadcast.message.event.enabled).toBe(true);
+    expect(shuffleBroadcast.message.event.shuffleHistory).toEqual([]);
   });
 });

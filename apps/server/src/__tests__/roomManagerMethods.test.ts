@@ -5,7 +5,7 @@ import type { WSBroadcastType, WSUnicastType } from "@beatsync/shared";
 import type { ServerWebSocket } from "bun";
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { mockR2 } from "@/__tests__/mocks/r2";
-import { createMockWs } from "@/__tests__/mocks/websocket";
+import { createMockServer, createMockWs } from "@/__tests__/mocks/websocket";
 import { RoomManager } from "@/managers/RoomManager";
 import type { BunServer, WSData } from "@/utils/websocket";
 
@@ -30,6 +30,8 @@ void mock.module("@/utils/responses", () => ({
 
 const ROOM_ID = "test-room";
 const AUDIO_URL = "https://example.com/song.mp3";
+const SECOND_AUDIO_URL = "https://example.com/song-2.mp3";
+const THIRD_AUDIO_URL = "https://example.com/song-3.mp3";
 
 function createRoomWithClients(count: number): { room: RoomManager; sockets: ServerWebSocket<WSData>[] } {
   const room = new RoomManager(ROOM_ID);
@@ -133,6 +135,28 @@ describe("updatePlaybackSchedulePlay", () => {
 
     expect(result).toBe(false);
     expect(room.getPlaybackState().type).toBe("paused");
+  });
+});
+
+describe("shuffle history", () => {
+  it("tracks played songs and resets after every queued song has played", () => {
+    const room = new RoomManager(ROOM_ID);
+    const server = createMockServer();
+    room.addAudioSource({ url: AUDIO_URL });
+    room.addAudioSource({ url: SECOND_AUDIO_URL });
+    room.addAudioSource({ url: THIRD_AUDIO_URL });
+
+    room.updatePlaybackSchedulePlay({ type: "PLAY", audioSource: AUDIO_URL, trackTimeSeconds: 0 }, 1000);
+    expect(room.setShuffle(true)).toEqual([AUDIO_URL]);
+
+    room.executeImmediatePlay({ type: "PLAY", audioSource: SECOND_AUDIO_URL, trackTimeSeconds: 0 }, server);
+    expect(room.getShuffleHistory()).toEqual([AUDIO_URL, SECOND_AUDIO_URL]);
+
+    room.executeImmediatePlay({ type: "PLAY", audioSource: THIRD_AUDIO_URL, trackTimeSeconds: 0 }, server);
+    expect(room.getShuffleHistory()).toEqual([AUDIO_URL, SECOND_AUDIO_URL, THIRD_AUDIO_URL]);
+
+    room.executeImmediatePlay({ type: "PLAY", audioSource: AUDIO_URL, trackTimeSeconds: 0 }, server);
+    expect(room.getShuffleHistory()).toEqual([THIRD_AUDIO_URL, AUDIO_URL]);
   });
 });
 

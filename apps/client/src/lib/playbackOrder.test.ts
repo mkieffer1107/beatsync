@@ -110,4 +110,30 @@ describe("playbackOrder", () => {
       })
     ).toBe("track-2");
   });
+
+  it("prefers unplayed tracks while shuffle history has gaps", () => {
+    expect(
+      getNextPlaybackTrack({
+        playbackOrder: ["track-1", "track-2", "track-3", "track-4"],
+        selectedAudioUrl: "track-1",
+        isShuffled: true,
+        allowWrap: true,
+        playedUrls: ["track-1", "track-2"],
+        random: () => 0,
+      })
+    ).toBe("track-3");
+  });
+
+  it("allows repeats after all shuffle candidates have been played", () => {
+    expect(
+      getNextPlaybackTrack({
+        playbackOrder: ["track-1", "track-2", "track-3"],
+        selectedAudioUrl: "track-1",
+        isShuffled: true,
+        allowWrap: true,
+        playedUrls: ["track-1", "track-2", "track-3"],
+        random: () => 0.9,
+      })
+    ).toBe("track-3");
+  });
 });

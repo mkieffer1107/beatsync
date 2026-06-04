@@ -186,6 +186,7 @@ describe("WebSocket Handlers (Simplified Tests)", () => {
       }
 
       expect(msg.event.enabled).toBe(true);
+      expect(msg.event.shuffleHistory).toEqual([]);
     });
   });
 

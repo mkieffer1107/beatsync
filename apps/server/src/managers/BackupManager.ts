@@ -51,7 +51,7 @@ export class BackupManager {
       // Restore client data
       room.restoreClientData(roomData.clientDatas);
 
-      room.restoreShuffle(roomData.isShuffled);
+      room.restoreShuffle(roomData.isShuffled, roomData.shuffleHistory);
 
       // Restore playback state - but validate it first
       const playbackStateIsValidTrack = validAudioSources.some(

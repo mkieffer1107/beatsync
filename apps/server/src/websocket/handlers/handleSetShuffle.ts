@@ -5,7 +5,7 @@ import type { HandlerFunction } from "@/websocket/types";
 
 export const handleSetShuffle: HandlerFunction<ExtractWSRequestFrom["SET_SHUFFLE"]> = ({ ws, message, server }) => {
   const { room } = requireCanMutate(ws);
-  room.setShuffle(message.enabled);
+  const shuffleHistory = room.setShuffle(message.enabled);
 
   sendBroadcast({
     server,
@@ -15,6 +15,7 @@ export const handleSetShuffle: HandlerFunction<ExtractWSRequestFrom["SET_SHUFFLE
       event: {
         type: "SET_SHUFFLE",
         enabled: message.enabled,
+        shuffleHistory,
       },
     },
   });

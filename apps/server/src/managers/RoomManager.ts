@@ -37,6 +37,7 @@ interface RoomData {
   listeningSource: PositionType;
   playbackControlsPermissions: PlaybackControlsPermissionsType;
   isShuffled: boolean;
+  shuffleHistory: string[];
   globalVolume: number; // Master volume multiplier (0-1)
   lowPassFreq: number; // Low-pass filter cutoff frequency (20-20000 Hz)
 }
@@ -69,6 +70,7 @@ const RoomBackupSchema = z.object({
   audioSources: z.array(AudioSourceSchema),
   playlists: z.array(PlaylistSchema).default([]),
   isShuffled: z.boolean().default(false),
+  shuffleHistory: z.array(z.string()).default([]),
   globalVolume: z.number().min(0).max(1).default(1.0),
   lowPassFreq: z
     .number()
@@ -136,6 +138,7 @@ export class RoomManager {
   private playbackState: RoomPlaybackState = INITIAL_PLAYBACK_STATE;
   private playbackControlsPermissions: PlaybackControlsPermissionsType = "ADMIN_ONLY";
   private isShuffled = false;
+  private shuffleHistory: string[] = [];
   private globalVolume = 1.0;
   private lowPassFreq: number = LOW_PASS_CONSTANTS.MAX_FREQ; // Default bypassed (full spectrum)
   private isMetronomeEnabled = false;
@@ -296,10 +299,13 @@ export class RoomManager {
   }
 
   private broadcastPlay(playAction: PlayActionType, server: BunServer): void {
+    const previousAudioSource = this.playbackState.audioSource;
     const serverTimeToExecute = this.getScheduledExecutionTime();
     const success = this.updatePlaybackSchedulePlay(playAction, serverTimeToExecute);
 
     if (success) {
+      this.recordShufflePlayback(playAction.audioSource, previousAudioSource);
+
       sendBroadcast({
         server,
         roomId: this.roomId,
@@ -653,8 +659,64 @@ export class RoomManager {
     return this.isShuffled;
   }
 
+  getShuffleHistory(): string[] {
+    this.shuffleHistory = this.pruneShuffleHistory(this.shuffleHistory);
+    return this.shuffleHistory;
+  }
+
   getPlaybackState(): RoomPlaybackState {
     return this.playbackState;
+  }
+
+  private getAudioSourceUrls(): string[] {
+    return this.audioSources.map((source) => source.url);
+  }
+
+  private pruneShuffleHistory(history: string[]): string[] {
+    const availableUrls = new Set(this.getAudioSourceUrls());
+    const prunedHistory: string[] = [];
+
+    for (const url of history) {
+      if (availableUrls.has(url) && !prunedHistory.includes(url)) {
+        prunedHistory.push(url);
+      }
+    }
+
+    return prunedHistory;
+  }
+
+  private getSeededShuffleHistory(): string[] {
+    const currentAudioSource = this.playbackState.audioSource;
+    if (!currentAudioSource || !this.getAudioSourceUrls().includes(currentAudioSource)) {
+      return [];
+    }
+
+    return [currentAudioSource];
+  }
+
+  private recordShufflePlayback(nextAudioSource: string, previousAudioSource: string): void {
+    if (!this.isShuffled) {
+      return;
+    }
+
+    const playbackOrder = this.getAudioSourceUrls();
+    if (!playbackOrder.includes(nextAudioSource)) {
+      return;
+    }
+
+    let prunedHistory = this.pruneShuffleHistory(this.shuffleHistory);
+
+    if (previousAudioSource && previousAudioSource !== nextAudioSource && playbackOrder.includes(previousAudioSource)) {
+      const candidateUrls = playbackOrder.filter((url) => url !== previousAudioSource);
+      const playedUrlSet = new Set(prunedHistory);
+      const hasUnplayedCandidate = candidateUrls.some((url) => !playedUrlSet.has(url));
+
+      if (!hasUnplayedCandidate) {
+        prunedHistory = [previousAudioSource];
+      }
+    }
+
+    this.shuffleHistory = [...prunedHistory.filter((url) => url !== nextAudioSource), nextAudioSource];
   }
 
   /**
@@ -781,8 +843,10 @@ export class RoomManager {
     this.playbackControlsPermissions = permissions;
   }
 
-  setShuffle(enabled: boolean): void {
+  setShuffle(enabled: boolean): string[] {
     this.isShuffled = enabled;
+    this.shuffleHistory = enabled ? this.getSeededShuffleHistory() : [];
+    return this.getShuffleHistory();
   }
 
   /**
@@ -795,11 +859,13 @@ export class RoomManager {
 
   clearAudioQueue(): AudioSourceType[] {
     if (this.audioSources.length === 0) {
+      this.shuffleHistory = [];
       return this.audioSources;
     }
 
     this.audioSources = [];
     this.playbackState = INITIAL_PLAYBACK_STATE;
+    this.shuffleHistory = [];
     this.clearAudioLoadingState();
     return this.audioSources;
   }
@@ -807,6 +873,7 @@ export class RoomManager {
   // Set all audio sources (used in backup restoration)
   setAudioSources(sources: AudioSourceInput[]): AudioSourceType[] {
     this.audioSources = sources.map((source) => this.normalizeAudioSource(source));
+    this.shuffleHistory = this.pruneShuffleHistory(this.shuffleHistory);
     this.refreshStoredPlaylistTracks();
     return this.audioSources;
   }
@@ -827,6 +894,7 @@ export class RoomManager {
     const removedUrl = removingCurrent ? this.playbackState.audioSource : undefined;
 
     this.audioSources = this.audioSources.filter((s) => !urlSet.has(s.url));
+    this.shuffleHistory = this.pruneShuffleHistory(this.shuffleHistory);
 
     // Reset playback state if we removed the currently playing track
     if (removingCurrent) {
@@ -887,6 +955,7 @@ export class RoomManager {
       listeningSource: this.listeningSource,
       playbackControlsPermissions: this.playbackControlsPermissions,
       isShuffled: this.isShuffled,
+      shuffleHistory: this.getShuffleHistory(),
       globalVolume: this.globalVolume,
       lowPassFreq: this.lowPassFreq,
     };
@@ -1353,6 +1422,7 @@ export class RoomManager {
       audioSources: this.audioSources,
       playlists: this.getPlaylists(),
       isShuffled: this.isShuffled,
+      shuffleHistory: this.getShuffleHistory(),
       globalVolume: this.globalVolume,
       lowPassFreq: this.lowPassFreq,
       playbackState: this.playbackState,
@@ -1562,8 +1632,9 @@ export class RoomManager {
     this.playbackState = playbackState;
   }
 
-  restoreShuffle(isShuffled: boolean): void {
+  restoreShuffle(isShuffled: boolean, shuffleHistory: string[] = []): void {
     this.isShuffled = isShuffled;
+    this.shuffleHistory = isShuffled ? this.pruneShuffleHistory(shuffleHistory) : [];
   }
 
   restorePlaylists(playlists: PlaylistInput[]): void {
@@ -1586,5 +1657,6 @@ export class RoomManager {
     }
 
     this.audioSources = newOrder;
+    this.shuffleHistory = this.pruneShuffleHistory(this.shuffleHistory);
   }
 }

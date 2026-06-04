@@ -156,6 +156,7 @@ interface GlobalStateValues {
 
   // Shuffle state
   isShuffled: boolean;
+  shuffleHistory: string[];
   playbackContext: PlaybackContext | null;
   reconnectionInfo: {
     isReconnecting: boolean;
@@ -230,7 +231,7 @@ interface GlobalState extends GlobalStateValues {
   getPlaybackOrderLength: () => number;
   setPlaybackContext: (context: PlaybackContext | null) => void;
   toggleShuffle: () => void;
-  setShuffleEnabled: (enabled: boolean) => void;
+  setShuffleEnabled: (enabled: boolean, shuffleHistory?: string[]) => void;
   sendShuffleUpdate: (enabled: boolean) => void;
   skipToNextTrack: (isAutoplay?: boolean) => void;
   skipToPreviousTrack: () => void;
@@ -290,6 +291,7 @@ const initialState: GlobalStateValues = {
 
   // Spatial audio
   isShuffled: false,
+  shuffleHistory: [],
   playbackContext: null,
   isSpatialAudioEnabled: false,
   isDraggingListeningSource: false,
@@ -596,6 +598,92 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         get().schedulePlay(pending);
       }
     }, 500);
+  };
+
+  const pruneShuffleHistory = (history: string[], playbackOrder: string[]) => {
+    const availableUrls = new Set(playbackOrder);
+    const prunedHistory: string[] = [];
+
+    for (const url of history) {
+      if (availableUrls.has(url) && !prunedHistory.includes(url)) {
+        prunedHistory.push(url);
+      }
+    }
+
+    return prunedHistory;
+  };
+
+  const getSeededShuffleHistory = (state: GlobalStateValues, enabled: boolean, shuffleHistory?: string[]) => {
+    if (!enabled) {
+      return [];
+    }
+
+    const playbackOrder = resolvePlaybackOrder(state);
+
+    if (shuffleHistory) {
+      return pruneShuffleHistory(shuffleHistory, playbackOrder);
+    }
+
+    if (!state.selectedAudioUrl) {
+      return [];
+    }
+
+    return playbackOrder.includes(state.selectedAudioUrl) ? [state.selectedAudioUrl] : [];
+  };
+
+  const applyShuffleEnabled = (enabled: boolean, shuffleHistory?: string[]) => {
+    set((state) => ({
+      isShuffled: enabled,
+      shuffleHistory: getSeededShuffleHistory(state, enabled, shuffleHistory),
+    }));
+  };
+
+  const markShuffleTrackPlayed = (url: string) => {
+    if (!url) {
+      return;
+    }
+
+    set((state) => {
+      if (!state.isShuffled) {
+        return {};
+      }
+
+      const playbackOrder = resolvePlaybackOrder(state);
+      if (!playbackOrder.includes(url)) {
+        return {};
+      }
+
+      const prunedHistory = pruneShuffleHistory(state.shuffleHistory, playbackOrder).filter(
+        (historyUrl) => historyUrl !== url
+      );
+
+      return {
+        shuffleHistory: [...prunedHistory, url],
+      };
+    });
+  };
+
+  const getShuffleHistoryForNextTrack = (state: GlobalState, playbackOrder: string[]) => {
+    if (!state.isShuffled) {
+      return [];
+    }
+
+    const prunedHistory = pruneShuffleHistory(state.shuffleHistory, playbackOrder);
+    const candidateUrls = playbackOrder.filter((url) => url !== state.selectedAudioUrl);
+    const playedUrlSet = new Set(prunedHistory);
+    const hasUnplayedCandidate = candidateUrls.some((url) => !playedUrlSet.has(url));
+
+    if (hasUnplayedCandidate) {
+      if (prunedHistory.length !== state.shuffleHistory.length) {
+        set({ shuffleHistory: prunedHistory });
+      }
+      return prunedHistory;
+    }
+
+    const resetHistory =
+      state.selectedAudioUrl && playbackOrder.includes(state.selectedAudioUrl) ? [state.selectedAudioUrl] : [];
+    set({ shuffleHistory: resetHistory });
+    return resetHistory;
   };
 
   // Helper function to manage LRU cache
@@ -943,6 +1031,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         playbackOffset: 0,
         duration: newDuration,
       });
+      markShuffleTrackPlayed(url);
 
       // Return the previous playing state for the skip functions to use
       return wasPlaying;
@@ -1013,6 +1102,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       }
 
       clearPendingScheduledPlay(data.audioSource);
+      markShuffleTrackPlayed(data.audioSource);
 
       let waitTimeSeconds = getWaitTimeSeconds(state, data.targetServerTime);
       const _olMs = getFilteredOutputLatencyMs();
@@ -1568,6 +1658,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         selectedAudioUrl: selectedAudioId,
         isShuffled,
         allowWrap: !playbackContext,
+        playedUrls: getShuffleHistoryForNextTrack(state, playbackOrder),
       });
 
       if (!nextAudioId) {
@@ -1632,10 +1723,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       state.sendShuffleUpdate(!state.isShuffled);
     },
 
-    setShuffleEnabled: (enabled) => set({ isShuffled: enabled }),
+    setShuffleEnabled: (enabled, shuffleHistory) => {
+      applyShuffleEnabled(enabled, shuffleHistory);
+    },
 
     sendShuffleUpdate: (enabled) => {
-      set({ isShuffled: enabled });
+      applyShuffleEnabled(enabled);
 
       const { socket } = get();
       if (!socket || socket.readyState !== 1) {
@@ -1805,6 +1898,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
         playlistLibraryOrigin: nextPlaylistLibrary.origin,
         selectedPlaylistId: nextSelectedPlaylistId,
         playbackContext: nextPlaybackContext,
+        shuffleHistory: pruneShuffleHistory(
+          state.shuffleHistory,
+          newAudioSources.map((audioSource) => audioSource.source.url)
+        ),
       });
 
       // If currentAudioSource is provided from server, update selectedAudioUrl and start loading it
