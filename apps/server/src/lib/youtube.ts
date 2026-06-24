@@ -23,6 +23,7 @@ interface YoutubeFlatEntry {
 interface YoutubeMetadata extends YoutubeFlatEntry {
   entries?: YoutubeFlatEntry[];
   playlist_id?: string;
+  playlist_count?: number;
   webpage_url_basename?: string;
 }
 
@@ -64,6 +65,14 @@ interface YtDlpAttempt {
 }
 
 let resolvedYtDlpBinaryPromise: Promise<ResolvedYtDlpBinary> | null = null;
+
+const YOUTUBE_ORIGIN = "https://www.youtube.com";
+
+const YOUTUBE_WEB_HEADERS = {
+  "accept-language": "en-US,en;q=0.9",
+  "user-agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+} as const;
 
 function isYoutubeUrl(url: string): boolean {
   try {
@@ -408,6 +417,318 @@ function getBestThumbnailUrl(metadata: YoutubeFlatEntry): string | undefined {
   return metadata.thumbnails?.map((thumbnail) => thumbnail.url).find((url): url is string => !!url);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readPath(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+
+  for (const segment of path) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+
+    current = current[segment];
+  }
+
+  return current;
+}
+
+function readString(value: unknown, path: string[]): string | undefined {
+  const current = readPath(value, path);
+  return typeof current === "string" && current.trim() ? current : undefined;
+}
+
+function readNumber(value: unknown, path: string[]): number | undefined {
+  const current = readPath(value, path);
+  return typeof current === "number" && Number.isFinite(current) ? current : undefined;
+}
+
+function readArray(value: unknown, path: string[]): unknown[] {
+  const current = readPath(value, path);
+  return Array.isArray(current) ? current : [];
+}
+
+function walkJson(value: unknown, visitor: (record: Record<string, unknown>) => void): void {
+  const stack: unknown[] = [value];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+
+    if (!isRecord(current)) {
+      continue;
+    }
+
+    visitor(current);
+
+    const children = Object.values(current);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+}
+
+function parseYoutubeDurationSeconds(value: string): number | undefined {
+  const normalized = value.trim();
+  if (!/^\d{1,3}:\d{2}(?::\d{2})?$/.test(normalized)) {
+    return undefined;
+  }
+
+  const parts = normalized.split(":").map((part) => Number.parseInt(part, 10));
+  if (parts.some((part) => Number.isNaN(part))) {
+    return undefined;
+  }
+
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+function findDurationSeconds(value: unknown): number | undefined {
+  const stack: unknown[] = [value];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+
+    if (typeof current === "string") {
+      const durationSeconds = parseYoutubeDurationSeconds(current);
+      if (durationSeconds !== undefined) {
+        return durationSeconds;
+      }
+      continue;
+    }
+
+    if (!isRecord(current)) {
+      continue;
+    }
+
+    const children = Object.values(current);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+
+  return undefined;
+}
+
+function getBestThumbnailFromSources(sources: unknown[]): string | undefined {
+  let bestSource: { area: number; url: string } | null = null;
+
+  for (const source of sources) {
+    const url = readString(source, ["url"]);
+    if (!url) {
+      continue;
+    }
+
+    const width = readNumber(source, ["width"]) ?? 0;
+    const height = readNumber(source, ["height"]) ?? 0;
+    const area = width * height;
+
+    if (!bestSource || area > bestSource.area) {
+      bestSource = { area, url };
+    }
+  }
+
+  return bestSource?.url;
+}
+
+function youtubeLockupToTrack(lockup: unknown): YoutubeImportTrack | null {
+  const contentType = readString(lockup, ["contentType"]);
+  if (contentType !== "LOCKUP_CONTENT_TYPE_VIDEO") {
+    return null;
+  }
+
+  const id =
+    readString(lockup, ["contentId"]) ??
+    readString(lockup, ["rendererContext", "commandContext", "onTap", "innertubeCommand", "watchEndpoint", "videoId"]);
+
+  if (!id) {
+    return null;
+  }
+
+  const title =
+    readString(lockup, ["metadata", "lockupMetadataViewModel", "title", "content"]) ??
+    readString(lockup, ["rendererContext", "accessibilityContext", "label"]) ??
+    `youtube-${id}`;
+
+  return {
+    id,
+    title,
+    sourceUrl: `${YOUTUBE_ORIGIN}/watch?v=${encodeURIComponent(id)}`,
+    thumbnailUrl: getBestThumbnailFromSources(
+      readArray(lockup, ["contentImage", "thumbnailViewModel", "image", "sources"])
+    ),
+    durationSeconds: findDurationSeconds(lockup),
+  };
+}
+
+export function extractYoutubeTracksFromWebData(data: unknown): YoutubeImportTrack[] {
+  const tracks: YoutubeImportTrack[] = [];
+
+  walkJson(data, (record) => {
+    const track = youtubeLockupToTrack(record.lockupViewModel);
+    if (track) {
+      tracks.push(track);
+    }
+  });
+
+  return tracks;
+}
+
+export function extractYoutubeContinuationTokens(data: unknown): string[] {
+  const tokens: string[] = [];
+
+  walkJson(data, (record) => {
+    const token = readString(record, ["continuationCommand", "token"]);
+    if (token) {
+      tokens.push(token);
+    }
+  });
+
+  return tokens;
+}
+
+function extractYoutubeInitialData(html: string): unknown {
+  const match =
+    /var ytInitialData = ([\s\S]*?);<\/script>/.exec(html) ??
+    /window\["ytInitialData"\] = ([\s\S]*?);<\/script>/.exec(html);
+
+  if (!match?.[1]) {
+    throw new Error("Could not locate YouTube initial playlist data");
+  }
+
+  return JSON.parse(match[1]) as unknown;
+}
+
+function extractYoutubeWebConfig(html: string): { apiKey: string; clientVersion: string; visitorData?: string } {
+  const apiKey = /"INNERTUBE_API_KEY":"([^"]+)"/.exec(html)?.[1];
+  const clientVersion = /"INNERTUBE_CLIENT_VERSION":"([^"]+)"/.exec(html)?.[1];
+  const visitorData = /"VISITOR_DATA":"([^"]+)"/.exec(html)?.[1] ?? /"visitorData":"([^"]+)"/.exec(html)?.[1];
+
+  if (!apiKey || !clientVersion) {
+    throw new Error("Could not locate YouTube web client configuration");
+  }
+
+  return { apiKey, clientVersion, visitorData };
+}
+
+async function fetchYoutubeContinuation(params: {
+  apiKey: string;
+  clientVersion: string;
+  continuation: string;
+  referer: string;
+  visitorData?: string;
+}): Promise<unknown> {
+  const response = await fetch(`${YOUTUBE_ORIGIN}/youtubei/v1/browse?key=${params.apiKey}&prettyPrint=false`, {
+    method: "POST",
+    headers: {
+      ...YOUTUBE_WEB_HEADERS,
+      "content-type": "application/json",
+      origin: YOUTUBE_ORIGIN,
+      referer: params.referer,
+    },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: "WEB",
+          clientVersion: params.clientVersion,
+          ...(params.visitorData ? { visitorData: params.visitorData } : {}),
+        },
+      },
+      continuation: params.continuation,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`YouTube continuation request failed with HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as unknown;
+}
+
+async function fetchYoutubePlaylistTracksFromWeb(url: string): Promise<YoutubeImportTrack[]> {
+  const response = await fetch(url, {
+    headers: YOUTUBE_WEB_HEADERS,
+  });
+
+  if (!response.ok) {
+    throw new Error(`YouTube playlist page request failed with HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const initialData = extractYoutubeInitialData(html);
+  const config = extractYoutubeWebConfig(html);
+  const tracks = extractYoutubeTracksFromWebData(initialData);
+  const continuationQueue = extractYoutubeContinuationTokens(initialData);
+  const visitedContinuations = new Set<string>();
+
+  while (continuationQueue.length > 0) {
+    const continuation = continuationQueue.shift();
+    if (!continuation || visitedContinuations.has(continuation)) {
+      continue;
+    }
+
+    visitedContinuations.add(continuation);
+
+    const continuationData = await fetchYoutubeContinuation({
+      ...config,
+      continuation,
+      referer: url,
+    });
+
+    tracks.push(...extractYoutubeTracksFromWebData(continuationData));
+
+    for (const nextContinuation of extractYoutubeContinuationTokens(continuationData)) {
+      if (!visitedContinuations.has(nextContinuation)) {
+        continuationQueue.push(nextContinuation);
+      }
+    }
+  }
+
+  return tracks;
+}
+
+function getYoutubePlaylistPageUrl(url: string): string {
+  const parsed = new URL(url);
+  const playlistId = parsed.searchParams.get("list")?.trim();
+
+  if (!playlistId) {
+    return url;
+  }
+
+  return `${YOUTUBE_ORIGIN}/playlist?list=${encodeURIComponent(playlistId)}`;
+}
+
+function mergeYoutubePlaylistTracks(params: {
+  webTracks: YoutubeImportTrack[];
+  ytDlpTracks: YoutubeImportTrack[];
+}): YoutubeImportTrack[] {
+  const ytDlpTrackById = new Map(params.ytDlpTracks.map((track) => [track.id, track]));
+  const webTrackIds = new Set(params.webTracks.map((track) => track.id));
+  const mergedTracks = params.webTracks.map((track) => {
+    const ytDlpTrack = ytDlpTrackById.get(track.id);
+
+    if (!ytDlpTrack) {
+      return track;
+    }
+
+    return {
+      id: track.id,
+      title: ytDlpTrack.title || track.title,
+      sourceUrl: ytDlpTrack.sourceUrl || track.sourceUrl,
+      thumbnailUrl: ytDlpTrack.thumbnailUrl ?? track.thumbnailUrl,
+      durationSeconds: ytDlpTrack.durationSeconds ?? track.durationSeconds,
+    };
+  });
+
+  for (const ytDlpTrack of params.ytDlpTracks) {
+    if (!webTrackIds.has(ytDlpTrack.id)) {
+      mergedTracks.push(ytDlpTrack);
+    }
+  }
+
+  return mergedTracks;
+}
+
 function toTrack(entry: YoutubeFlatEntry): YoutubeImportTrack | null {
   const id = entry.id ?? entry.url;
   if (!id) {
@@ -472,7 +793,33 @@ export async function getYoutubeImportPlan(url: string, mode: YoutubeImportMode 
   const raw = await runCommand(ytDlpBinary.command, [...getYoutubeMetadataArgs(request.mode), request.url]);
 
   const metadata = JSON.parse(raw) as YoutubeMetadata;
-  return buildYoutubeImportPlanFromMetadata(metadata, request.mode);
+  const plan = buildYoutubeImportPlanFromMetadata(metadata, request.mode);
+
+  if (
+    request.mode === "playlist" &&
+    plan.kind === "playlist" &&
+    typeof metadata.playlist_count === "number" &&
+    metadata.playlist_count > plan.tracks.length
+  ) {
+    try {
+      const webTracks = await fetchYoutubePlaylistTracksFromWeb(getYoutubePlaylistPageUrl(request.url));
+      const mergedTracks = mergeYoutubePlaylistTracks({
+        webTracks,
+        ytDlpTracks: plan.tracks,
+      });
+
+      if (mergedTracks.length > plan.tracks.length) {
+        return {
+          ...plan,
+          tracks: mergedTracks,
+        };
+      }
+    } catch (error) {
+      console.warn("Failed to supplement truncated YouTube playlist metadata:", error);
+    }
+  }
+
+  return plan;
 }
 
 function getDownloadedFilePath(stdout: string): string {

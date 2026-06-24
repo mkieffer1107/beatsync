@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { buildYoutubeImportPlanFromMetadata, getYoutubeMetadataArgs, resolveYoutubeImportRequest } from "@/lib/youtube";
+import {
+  buildYoutubeImportPlanFromMetadata,
+  extractYoutubeContinuationTokens,
+  extractYoutubeTracksFromWebData,
+  getYoutubeMetadataArgs,
+  resolveYoutubeImportRequest,
+} from "@/lib/youtube";
 
 describe("youtube import planning", () => {
   it("uses no-playlist metadata args for single-video imports", () => {
@@ -38,7 +44,10 @@ describe("youtube import planning", () => {
   });
 
   it("does not downgrade non-radio watch URLs that include a playlist id", () => {
-    const request = resolveYoutubeImportRequest("https://www.youtube.com/watch?v=video-123&list=PL123456789", "playlist");
+    const request = resolveYoutubeImportRequest(
+      "https://www.youtube.com/watch?v=video-123&list=PL123456789",
+      "playlist"
+    );
 
     expect(request).toEqual({
       url: "https://www.youtube.com/watch?v=video-123&list=PL123456789",
@@ -93,5 +102,104 @@ describe("youtube import planning", () => {
     expect(plan.kind).toBe("playlist");
     expect(plan.playlistId).toBe("playlist-123");
     expect(plan.tracks.map((track) => track.id)).toEqual(["track-1", "track-2"]);
+  });
+
+  it("extracts modern YouTube lockup playlist entries", () => {
+    const tracks = extractYoutubeTracksFromWebData({
+      contents: [
+        {
+          lockupViewModel: {
+            contentId: "video-123",
+            contentType: "LOCKUP_CONTENT_TYPE_VIDEO",
+            contentImage: {
+              thumbnailViewModel: {
+                image: {
+                  sources: [
+                    {
+                      url: "https://i.ytimg.com/vi/video-123/default.jpg",
+                      width: 120,
+                      height: 90,
+                    },
+                    {
+                      url: "https://i.ytimg.com/vi/video-123/hqdefault.jpg",
+                      width: 480,
+                      height: 360,
+                    },
+                  ],
+                },
+                overlays: [
+                  {
+                    thumbnailBottomOverlayViewModel: {
+                      badges: [
+                        {
+                          thumbnailBadgeViewModel: {
+                            text: "1:02:03",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+            metadata: {
+              lockupMetadataViewModel: {
+                title: {
+                  content: "Modern Playlist Entry",
+                },
+              },
+            },
+          },
+        },
+        {
+          lockupViewModel: {
+            contentId: "playlist-123",
+            contentType: "LOCKUP_CONTENT_TYPE_PLAYLIST",
+            metadata: {
+              lockupMetadataViewModel: {
+                title: {
+                  content: "Related Playlist",
+                },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(tracks).toEqual([
+      {
+        id: "video-123",
+        title: "Modern Playlist Entry",
+        sourceUrl: "https://www.youtube.com/watch?v=video-123",
+        thumbnailUrl: "https://i.ytimg.com/vi/video-123/hqdefault.jpg",
+        durationSeconds: 3723,
+      },
+    ]);
+  });
+
+  it("extracts YouTube continuation tokens from nested web data", () => {
+    const tokens = extractYoutubeContinuationTokens({
+      contents: [
+        {
+          continuationItemViewModel: {
+            button: {
+              command: {
+                continuationCommand: {
+                  token: "token-1",
+                },
+              },
+            },
+          },
+        },
+        {
+          continuationCommand: {
+            token: "token-2",
+          },
+        },
+      ],
+    });
+
+    expect(tokens).toEqual(["token-1", "token-2"]);
   });
 });
