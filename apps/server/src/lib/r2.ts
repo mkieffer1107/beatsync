@@ -13,6 +13,7 @@ import { config } from "dotenv";
 import { mkdir, readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import path from "node:path";
 import sanitize from "sanitize-filename";
+import { isMusicLibraryPath, musicLibraryAudioExists } from "@/lib/musicLibrary";
 import { corsHeaders, errorResponse } from "@/utils/responses";
 
 config();
@@ -427,6 +428,15 @@ export function extractKeyFromUrl(url: string): string | null {
  * Validate if an audio file exists in active storage
  */
 export async function validateAudioFileExists(audioUrl: string): Promise<boolean> {
+  try {
+    const pathname = new URL(audioUrl, "http://localhost").pathname;
+    if (isMusicLibraryPath(pathname)) {
+      return await musicLibraryAudioExists(audioUrl);
+    }
+  } catch {
+    return false;
+  }
+
   const key = extractKeyFromUrl(audioUrl);
 
   if (!key) {

@@ -58,6 +58,19 @@ To make every joining user an admin in the production LAN stack, add
 bun run lan:prod --admin-all --single-room
 ```
 
+To expose an existing directory as the default, read-only music library, add
+`--music-dir`. The server scans supported audio files recursively and serves
+them through the existing `/audio/*` route. Removing a library track from a
+room queue does not delete its source file; click **Load default tracks** to add
+available library tracks back to the queue.
+
+```sh
+bun run lan:prod --music-dir /home/bot/Music/BeatSync --single-room --admin-all
+```
+
+Without `--music-dir`, the existing `default/` object-storage behavior is
+unchanged.
+
 On a Raspberry Pi desktop, add `--open-site` with `--single-room` to open
 Chromium directly to the room and auto-enter the main queue UI after sync:
 

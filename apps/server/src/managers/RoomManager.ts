@@ -71,7 +71,7 @@ const RoomBackupSchema = z.object({
   playlists: z.array(PlaylistSchema).default([]),
   isShuffled: z.boolean().default(false),
   shuffleHistory: z.array(z.string()).default([]),
-  globalVolume: z.number().min(0).max(1).default(1.0),
+  globalVolume: z.number().min(0).max(1).default(0.5),
   lowPassFreq: z
     .number()
     .min(LOW_PASS_CONSTANTS.MIN_FREQ)
@@ -139,7 +139,7 @@ export class RoomManager {
   private playbackControlsPermissions: PlaybackControlsPermissionsType = "ADMIN_ONLY";
   private isShuffled = false;
   private shuffleHistory: string[] = [];
-  private globalVolume = 1.0;
+  private globalVolume = 0.5;
   private lowPassFreq: number = LOW_PASS_CONSTANTS.MAX_FREQ; // Default bypassed (full spectrum)
   private isMetronomeEnabled = false;
   // Map of trackId to job status

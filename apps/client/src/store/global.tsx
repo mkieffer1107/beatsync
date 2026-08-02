@@ -322,7 +322,7 @@ const initialState: GlobalStateValues = {
   audioPlayer: null,
   duration: 0,
   volume: 0.5,
-  globalVolume: 1.0, // Default 100%
+  globalVolume: 0.5, // Start rooms at a comfortable 50%
   reconnectionInfo: {
     isReconnecting: false,
     currentAttempt: 0,
@@ -507,10 +507,33 @@ const getWaitTimeSeconds = (state: GlobalState, targetServerTime: number) => {
   return Math.max(0, (waitTimeMilliseconds - outputLatencyMs) / 1000);
 };
 
-const resolveAudioUrl = (url: string): string => (url.startsWith("/") ? `${getApiUrl()}${url}` : url);
+const resolveAudioUrl = (url: string): string => {
+  const resolvedUrl = url.startsWith("/") ? `${getApiUrl()}${url}` : url;
+
+  // Older LAN imports were persisted with an http:// public URL. Browsers block
+  // those requests as mixed content once Vibe is served over HTTPS, so upgrade
+  // same-origin audio without rewriting unrelated external sources.
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    try {
+      const parsedUrl = new URL(resolvedUrl, window.location.origin);
+      if (parsedUrl.protocol === "http:" && parsedUrl.hostname === window.location.hostname) {
+        parsedUrl.protocol = "https:";
+        parsedUrl.port = "";
+        return parsedUrl.toString();
+      }
+    } catch {
+      // Let fetch surface malformed URLs through the normal load error state.
+    }
+  }
+
+  return resolvedUrl;
+};
 
 const downloadBufferFromURL = async (data: { url: string; onProgress?: (loaded: number, total: number) => void }) => {
   const response = await fetch(resolveAudioUrl(data.url));
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audio: ${response.status} ${response.statusText}`);
+  }
   const contentLength = Number(response.headers.get("content-length") ?? 0);
 
   let arrayBuffer: ArrayBuffer;

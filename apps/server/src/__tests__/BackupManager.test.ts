@@ -32,13 +32,13 @@ describe("BackupManager (Simplified Tests)", () => {
       expect(room1Backup).toMatchObject({
         clientDatas: [],
         audioSources: [{ url: "https://example.com/audio1.mp3" }, { url: "https://example.com/audio2.mp3" }],
-        globalVolume: 1,
+        globalVolume: 0.5,
       });
 
       expect(room2Backup).toMatchObject({
         clientDatas: [],
         audioSources: [{ url: "https://example.com/audio3.mp3" }],
-        globalVolume: 1,
+        globalVolume: 0.5,
       });
     });
 

@@ -10,12 +10,15 @@ SINGLE_ROOM_FLAG_REQUESTED=0
 SINGLE_ROOM_FLAG_ID=""
 ADMIN_ALL_FLAG_REQUESTED=0
 OPEN_SITE_FLAG_REQUESTED=0
+MUSIC_DIR_FLAG_REQUESTED=0
+MUSIC_DIR_FLAG_VALUE=""
 
 usage() {
   cat <<EOF
-Usage: $0 [--single-room] [--single-room-id ROOM_ID] [--admin-all] [--open-site]
+Usage: $0 [--music-dir DIRECTORY] [--single-room] [--single-room-id ROOM_ID] [--admin-all] [--open-site]
 
 Options:
+  --music-dir DIRECTORY     Use DIRECTORY as the read-only default music library.
   --single-room              Redirect the LAN root URL to /room/$DEFAULT_SINGLE_ROOM_ID.
   --single-room=ROOM_ID      Redirect the LAN root URL to the given 6-digit room.
   --single-room-id ROOM_ID   Same as --single-room=ROOM_ID.
@@ -42,6 +45,21 @@ is_truthy() {
 parse_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --music-dir)
+        if [ "${2:-}" = "" ]; then
+          echo "Missing value for --music-dir" >&2
+          usage >&2
+          exit 1
+        fi
+        MUSIC_DIR_FLAG_REQUESTED=1
+        MUSIC_DIR_FLAG_VALUE="$2"
+        shift 2
+        ;;
+      --music-dir=*)
+        MUSIC_DIR_FLAG_REQUESTED=1
+        MUSIC_DIR_FLAG_VALUE="${1#*=}"
+        shift
+        ;;
       --single-room)
         SINGLE_ROOM_FLAG_REQUESTED=1
         shift
@@ -234,6 +252,22 @@ cd "$ROOT_DIR"
 export NODE_ENV=production
 load_env_file "$SERVER_ENV_FILE"
 load_env_file "$CLIENT_ENV_FILE"
+
+if [ "$MUSIC_DIR_FLAG_REQUESTED" -eq 1 ]; then
+  if [ ! -d "$MUSIC_DIR_FLAG_VALUE" ]; then
+    echo "Music directory does not exist: $MUSIC_DIR_FLAG_VALUE" >&2
+    exit 1
+  fi
+
+  if [ ! -r "$MUSIC_DIR_FLAG_VALUE" ]; then
+    echo "Music directory is not readable: $MUSIC_DIR_FLAG_VALUE" >&2
+    exit 1
+  fi
+
+  BEATSYNC_MUSIC_DIR="$(cd "$MUSIC_DIR_FLAG_VALUE" && pwd -P)"
+  export BEATSYNC_MUSIC_DIR
+  echo "[music] read-only library: $BEATSYNC_MUSIC_DIR"
+fi
 
 if [ "$SINGLE_ROOM_FLAG_REQUESTED" -eq 1 ]; then
   export NEXT_PUBLIC_SINGLE_ROOM_MODE=1
