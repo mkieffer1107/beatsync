@@ -14,9 +14,11 @@ import { handleSendIp } from "@/websocket/handlers/handleSendIp";
 import { handleSetAdmin } from "@/websocket/handlers/handleSetAdmin";
 import { handleSetPlaybackControls } from "@/websocket/handlers/handleSetPlaybackControls";
 import { handleSetPlaylistTracks } from "@/websocket/handlers/handleSetPlaylistTracks";
+import { handleSetDefaultPlaylist } from "@/websocket/handlers/handleSetDefaultPlaylist";
 import { handleSetShuffle } from "@/websocket/handlers/handleSetShuffle";
 import { handleStreamMusic } from "@/websocket/handlers/handleStreamMusic";
 import { handleImportYoutube } from "@/websocket/handlers/handleImportYoutube";
+import { handleSaveYoutubePlaylist } from "@/websocket/handlers/handleSaveYoutubePlaylist";
 import { handleUpdatePlaylist } from "@/websocket/handlers/handleUpdatePlaylist";
 import { handleMoveClient } from "@/websocket/handlers/moveClient";
 import { handleNTPRequest } from "@/websocket/handlers/ntpRequest";
@@ -132,9 +134,19 @@ export const WS_REGISTRY: WebsocketRegistry = {
     description: "Import a YouTube video or playlist",
   },
 
+  [ClientActionEnum.enum.SAVE_YOUTUBE_PLAYLIST]: {
+    handle: handleSaveYoutubePlaylist,
+    description: "Persist and exact-sync a YouTube playlist on this server",
+  },
+
   [ClientActionEnum.enum.QUEUE_PLAYLIST]: {
     handle: handleQueuePlaylist,
     description: "Move playlist tracks to the front of the room queue",
+  },
+
+  [ClientActionEnum.enum.SET_DEFAULT_PLAYLIST]: {
+    handle: handleSetDefaultPlaylist,
+    description: "Persist the saved playlist used by the empty-queue loader",
   },
 
   [ClientActionEnum.enum.QUEUE_TRACKS]: {

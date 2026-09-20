@@ -1,11 +1,43 @@
 import { IS_DEMO_MODE } from "@/demo";
+import { getSavedDefaultPlaylistId, listSavedPlaylists } from "@/lib/savedPlaylists";
 import { globalManager } from "@/managers";
+import type { RoomManager } from "@/managers/RoomManager";
 import { sendBroadcast, sendToClient, sendUnicast } from "@/utils/responses";
 import type { BunServer, WSData } from "@/utils/websocket";
 import { dispatchMessage } from "@/websocket/dispatch";
 import type { WSBroadcastType } from "@beatsync/shared";
 import { epochNow, WSRequestSchema } from "@beatsync/shared";
 import type { ServerWebSocket } from "bun";
+
+const savedPlaylistHydrations = new WeakMap<RoomManager, Promise<void>>();
+
+function hydrateSavedPlaylists(room: RoomManager, roomId: string, server: BunServer): void {
+  if (savedPlaylistHydrations.has(room)) return;
+
+  const hydration = Promise.all([listSavedPlaylists(), getSavedDefaultPlaylistId()])
+    .then(([savedPlaylists, defaultPlaylistId]) => {
+      const runtimePlaylists = room.getPlaylists().filter((playlist) => !playlist.isSaved);
+      const hydratedSavedPlaylists = savedPlaylists.map((playlist) => ({
+        ...playlist,
+        isDefault: playlist.id === defaultPlaylistId,
+      }));
+      room.setPlaylists([...runtimePlaylists, ...hydratedSavedPlaylists]);
+      sendBroadcast({
+        server,
+        roomId,
+        message: {
+          type: "ROOM_EVENT",
+          event: { type: "SET_PLAYLISTS", playlists: room.getPlaylists() },
+        },
+      });
+    })
+    .catch((error: unknown) => {
+      console.error(`Failed to load saved playlists for room ${roomId}:`, error);
+      savedPlaylistHydrations.delete(room);
+    });
+
+  savedPlaylistHydrations.set(room, hydration);
+}
 
 const createClientUpdate = (roomId: string) => {
   const room = globalManager.getRoom(roomId);
@@ -47,6 +79,10 @@ export const handleOpen = (ws: ServerWebSocket<WSData>, server: BunServer) => {
 
   const room = globalManager.getOrCreateRoom(roomId);
   room.addClient(ws);
+
+  // Saved playlists are discovered on startup, but remain outside the live
+  // queue until an admin explicitly chooses Load Playlist.
+  if (!IS_DEMO_MODE) hydrateSavedPlaylists(room, roomId, server);
 
   const { audioSources, playlists, globalVolume, lowPassFreq, isShuffled, shuffleHistory } = room.getState();
   const now = epochNow();

@@ -63,6 +63,7 @@ type ScheduledPlayRequest = {
   trackTimeSeconds: number;
   targetServerTime: number;
   audioSource: string;
+  startWhenReady?: boolean;
 };
 
 enum AudioPlayerError {
@@ -1078,6 +1079,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       // Simulate scheduling delay for testing:
       // await new Promise((resolve) => setTimeout(resolve, 500));
 
+      // A newer play supersedes any track still waiting for a download.
+      clearPendingScheduledPlay();
       // Find the index of the audio to play
       const audioIndex = state.findAudioIndexByUrl(data.audioSource);
 
@@ -1126,6 +1129,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       clearPendingScheduledPlay(data.audioSource);
       markShuffleTrackPlayed(data.audioSource);
+
+      if (data.startWhenReady) {
+        // Loading time must not cause a further sync delay or skip the song's intro.
+        state.playAudio({ offset: data.trackTimeSeconds, when: 0, audioIndex });
+        return;
+      }
 
       let waitTimeSeconds = getWaitTimeSeconds(state, data.targetServerTime);
       const _olMs = getFilteredOutputLatencyMs();

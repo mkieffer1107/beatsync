@@ -52,6 +52,8 @@ export const PlaylistSchema = z.object({
   sourceKind: z.enum(["manual", "youtube"]).default("manual"),
   externalId: z.string().optional(),
   originalUrl: z.string().url().optional(),
+  isSaved: z.boolean().default(false),
+  isDefault: z.boolean().default(false),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

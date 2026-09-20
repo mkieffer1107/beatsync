@@ -1,6 +1,6 @@
 import { ADMIN_SECRET, IS_DEMO_MODE } from "@/demo";
 import { getStorageMode, observePublicBaseUrl } from "@/lib/r2";
-import { isMusicLibraryPath, serveMusicLibraryAudio } from "@/lib/musicLibrary";
+import { isSavedPlaylistPath, serveSavedPlaylistAudio } from "@/lib/savedPlaylists";
 import { BackupManager } from "@/managers/BackupManager";
 import { getActiveRooms } from "@/routes/active";
 import { handleGetDefaultAudio } from "@/routes/default";
@@ -55,9 +55,9 @@ const server = Bun.serve<WSData>({
 
     try {
       if (url.pathname.startsWith("/audio/")) {
-        if (isMusicLibraryPath(url.pathname)) {
+        if (isSavedPlaylistPath(url.pathname)) {
           if (IS_DEMO_MODE) return errorResponse("Not found", 404);
-          return await serveMusicLibraryAudio(url.pathname);
+          return await serveSavedPlaylistAudio(url.pathname);
         }
 
         if (!IS_DEMO_MODE && getStorageMode() !== "local") {

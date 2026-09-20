@@ -32,7 +32,9 @@ export const ClientActionEnum = z.enum([
   "SEARCH_MUSIC", // Search for music
   "STREAM_MUSIC", // Stream music
   "IMPORT_YOUTUBE", // Import a YouTube video or playlist
+  "SAVE_YOUTUBE_PLAYLIST", // Persist a YouTube playlist on this server
   "QUEUE_PLAYLIST", // Add an existing playlist back into the room queue
+  "SET_DEFAULT_PLAYLIST", // Persist which saved playlist the empty queue should load
   "QUEUE_TRACKS", // Add arbitrary saved tracks back into the room queue
   "CREATE_PLAYLIST", // Create a playlist object in the room
   "UPDATE_PLAYLIST", // Update playlist metadata
@@ -157,8 +159,20 @@ export const ImportYoutubeSchema = z.object({
   mode: z.enum(["video", "playlist"]).optional(),
 });
 
+export const SaveYoutubePlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SAVE_YOUTUBE_PLAYLIST),
+  playlistId: z.string().min(1).optional(),
+  url: z.string().url().optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+});
+
 export const QueuePlaylistSchema = z.object({
   type: z.literal(ClientActionEnum.enum.QUEUE_PLAYLIST),
+  playlistId: z.string().min(1),
+});
+
+export const SetDefaultPlaylistSchema = z.object({
+  type: z.literal(ClientActionEnum.enum.SET_DEFAULT_PLAYLIST),
   playlistId: z.string().min(1),
 });
 
@@ -249,7 +263,9 @@ export const WSRequestSchema = z.discriminatedUnion("type", [
   SearchMusicSchema,
   StreamMusicSchema,
   ImportYoutubeSchema,
+  SaveYoutubePlaylistSchema,
   QueuePlaylistSchema,
+  SetDefaultPlaylistSchema,
   QueueTracksSchema,
   CreatePlaylistSchema,
   UpdatePlaylistSchema,

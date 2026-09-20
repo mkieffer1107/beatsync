@@ -58,18 +58,24 @@ To make every joining user an admin in the production LAN stack, add
 bun run lan:prod --admin-all --single-room
 ```
 
-To expose an existing directory as the default, read-only music library, add
-`--music-dir`. The server scans supported audio files recursively and serves
-them through the existing `/audio/*` route. Removing a library track from a
-room queue does not delete its source file; click **Load default tracks** to add
-available library tracks back to the queue.
+Set `BEATSYNC_PLAYLISTS_DIR` in `apps/server/.env.production` (or in the service
+environment) to choose where explicitly saved playlists live. Paste a YouTube
+playlist in the upload panel and choose **Save playlist** to download it into a
+named subdirectory. Saved playlists reappear in the Playlists view after every
+restart, but they stay out of the live queue until you choose **Load Playlist**.
+Removing a track from the queue never deletes its saved file.
 
 ```sh
-bun run lan:prod --music-dir /home/bot/Music/BeatSync --single-room --admin-all
+BEATSYNC_PLAYLISTS_DIR=/home/bot/Music/vibe-playlist \
+  bun run lan:prod --single-room --admin-all
 ```
 
-Without `--music-dir`, the existing `default/` object-storage behavior is
-unchanged.
+**Sync With YouTube** makes a saved playlist an exact mirror of its upstream
+playlist: newly added videos are downloaded and videos removed upstream are
+removed from that saved playlist. Renaming a saved playlist also renames its
+storage directory. One-off uploads and YouTube imports remain runtime-only when
+`BEATSYNC_PLAYLISTS_DIR` is configured. Without that environment variable, the
+existing object-storage behavior is unchanged.
 
 On a Raspberry Pi desktop, add `--open-site` with `--single-room` to open
 Chromium directly to the room and auto-enter the main queue UI after sync:

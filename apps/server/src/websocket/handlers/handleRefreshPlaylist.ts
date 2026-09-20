@@ -2,6 +2,8 @@ import { globalManager } from "@/managers";
 import { getYoutubeImportPlan } from "@/lib/youtube";
 import { buildYoutubeTrackExternalId, resolveYoutubeTrackForRoom } from "@/lib/youtubeRoomImport";
 import { observePublicBaseUrl } from "@/lib/r2";
+import { applySavedPlaylistToRoom } from "@/lib/savedPlaylistRoom";
+import { syncSavedYoutubePlaylist } from "@/lib/savedPlaylists";
 import { sendBroadcast, sendUnicast } from "@/utils/responses";
 import { requireCanMutate } from "@/websocket/middlewares";
 import type { HandlerFunction } from "@/websocket/types";
@@ -84,6 +86,77 @@ export const handleRefreshPlaylist: HandlerFunction<ExtractWSRequestFrom["REFRES
   }
 
   try {
+    if (playlist.isSaved) {
+      const jobKey = `saved-playlist:${playlist.id}`;
+      if (room.hasActiveStreamJob(jobKey)) {
+        sendUnicast({
+          ws,
+          message: {
+            type: "IMPORT_STATUS",
+            status: "error",
+            message: `"${playlist.name}" is already syncing`,
+            collectionName: playlist.name,
+          },
+        });
+        return;
+      }
+
+      room.addStreamJob(jobKey);
+      sendBroadcast({
+        server,
+        roomId,
+        message: { type: "STREAM_JOB_UPDATE", activeJobCount: room.getActiveStreamJobCount() },
+      });
+      sendUnicast({
+        ws,
+        message: {
+          type: "IMPORT_STATUS",
+          status: "started",
+          message: `Syncing "${playlist.name}" with YouTube`,
+          collectionName: playlist.name,
+        },
+      });
+
+      try {
+        const result = await syncSavedYoutubePlaylist({
+          name: playlist.name,
+          originalUrl: refreshUrl,
+          playlistId: playlist.id,
+        });
+        applySavedPlaylistToRoom({
+          room,
+          playlist: result.playlist,
+          previousPlaylist: playlist,
+        });
+        broadcastAudioSources();
+        sendBroadcast({
+          server,
+          roomId,
+          message: { type: "ROOM_EVENT", event: { type: "SET_PLAYLISTS", playlists: room.getPlaylists() } },
+        });
+        sendUnicast({
+          ws,
+          message: {
+            type: "IMPORT_STATUS",
+            status: "completed",
+            message: `Synced "${result.playlist.name}": ${result.addedCount} added, ${result.removedCount} removed${result.failedCount ? `, ${result.failedCount} unavailable skipped` : ""}`,
+            importedCount: result.addedCount,
+            failedCount: result.failedCount,
+            collectionName: result.playlist.name,
+            playlistId: result.playlist.id,
+          },
+        });
+      } finally {
+        room.removeStreamJob(jobKey);
+        sendBroadcast({
+          server,
+          roomId,
+          message: { type: "STREAM_JOB_UPDATE", activeJobCount: room.getActiveStreamJobCount() },
+        });
+      }
+      return;
+    }
+
     const plan = await getYoutubeImportPlan(refreshUrl, "playlist");
     if (plan.kind !== "playlist") {
       throw new Error("That URL no longer resolves to a YouTube playlist");

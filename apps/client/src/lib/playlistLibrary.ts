@@ -27,6 +27,8 @@ export interface PlaylistLibraryItem {
   sourceKind: string | null;
   originalUrl: string | null;
   externalId: string | null;
+  isSaved: boolean;
+  isDefault: boolean;
   tracks: PlaylistTrack[];
 }
 
@@ -158,11 +160,13 @@ const getPlaylistSourceKind = (source: AudioSourceType) => {
 };
 
 const finalizePlaylist = (
-  draft: Omit<PlaylistLibraryItem, "trackCount" | "artworkUrl" | "sourceKind"> & {
+  draft: Omit<PlaylistLibraryItem, "trackCount" | "artworkUrl" | "sourceKind" | "isSaved" | "isDefault"> & {
     artworkUrl?: string | null;
     sourceKind?: string | null;
     originalUrl?: string | null;
     externalId?: string | null;
+    isSaved?: boolean;
+    isDefault?: boolean;
   }
 ): PlaylistLibraryItem => {
   const tracks = [...draft.tracks].sort((left, right) => {
@@ -181,6 +185,8 @@ const finalizePlaylist = (
     sourceKind: draft.sourceKind ?? tracks.map((track) => getPlaylistSourceKind(track.source)).find(Boolean) ?? null,
     originalUrl: draft.originalUrl ?? null,
     externalId: draft.externalId ?? null,
+    isSaved: draft.isSaved ?? false,
+    isDefault: draft.isDefault ?? false,
   };
 };
 
@@ -196,9 +202,11 @@ export const findPlaylistIdForTrack = (playlists: PlaylistLibraryItem[], url: st
 export const derivePlaylistsFromAudioSources = (sources: AudioSourceType[]): PlaylistLibraryItem[] => {
   const drafts = new Map<
     string,
-    Omit<PlaylistLibraryItem, "trackCount" | "artworkUrl" | "sourceKind"> & {
+    Omit<PlaylistLibraryItem, "trackCount" | "artworkUrl" | "sourceKind" | "isSaved" | "isDefault"> & {
       artworkUrl?: string | null;
       sourceKind?: string | null;
+      isSaved?: boolean;
+      isDefault?: boolean;
     }
   >();
 
@@ -230,6 +238,8 @@ export const derivePlaylistsFromAudioSources = (sources: AudioSourceType[]): Pla
         sourceKind: getPlaylistSourceKind(source),
         originalUrl: null,
         externalId: readNestedString(asRecord(source), ["collection", "externalId"]),
+        isSaved: false,
+        isDefault: false,
       });
       return;
     }
@@ -307,6 +317,8 @@ export const normalizePlaylists = (playlists: unknown, sources: AudioSourceType[
         sourceKind: readString(record.sourceKind, record.kind, record.type),
         originalUrl: readString(record.originalUrl),
         externalId: readString(record.externalId),
+        isSaved: record.isSaved === true,
+        isDefault: record.isDefault === true,
         tracks,
       })
     );

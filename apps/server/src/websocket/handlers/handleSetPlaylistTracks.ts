@@ -1,4 +1,4 @@
-import { sendBroadcast } from "@/utils/responses";
+import { sendBroadcast, sendUnicast } from "@/utils/responses";
 import { requireCanMutate } from "@/websocket/middlewares";
 import type { HandlerFunction } from "@/websocket/types";
 import type { ExtractWSRequestFrom } from "@beatsync/shared";
@@ -9,6 +9,19 @@ export const handleSetPlaylistTracks: HandlerFunction<ExtractWSRequestFrom["SET_
   server,
 }) => {
   const { room } = requireCanMutate(ws);
+  const playlist = room.getPlaylist(message.playlistId);
+
+  if (playlist?.isSaved) {
+    sendUnicast({
+      ws,
+      message: {
+        type: "IMPORT_STATUS",
+        status: "error",
+        message: "Saved YouTube playlists are exact mirrors. Refresh the playlist to change its tracks.",
+      },
+    });
+    return;
+  }
 
   const updated = room.setPlaylistTracks(message.playlistId, message.trackUrls);
   if (!updated) {

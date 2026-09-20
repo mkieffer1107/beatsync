@@ -10,10 +10,12 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { R2_AUDIO_FILE_NAME_DELIMITER } from "@beatsync/shared";
 import { config } from "dotenv";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import sanitize from "sanitize-filename";
-import { isMusicLibraryPath, musicLibraryAudioExists } from "@/lib/musicLibrary";
+import { isSavedPlaylistPath, savedPlaylistAudioExists } from "@/lib/savedPlaylists";
 import { corsHeaders, errorResponse } from "@/utils/responses";
 
 config();
@@ -26,7 +28,10 @@ const S3_CONFIG = {
   SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
 };
 
-const LOCAL_STORAGE_ROOT = path.resolve(process.env.LOCAL_STORAGE_ROOT ?? path.join(process.cwd(), "storage"));
+const EPHEMERAL_RUNTIME_STORAGE = Boolean(process.env.BEATSYNC_PLAYLISTS_DIR?.trim());
+const LOCAL_STORAGE_ROOT = EPHEMERAL_RUNTIME_STORAGE
+  ? mkdtempSync(path.join(tmpdir(), "beatsync-runtime-storage-"))
+  : path.resolve(process.env.LOCAL_STORAGE_ROOT ?? path.join(process.cwd(), "storage"));
 const DEFAULT_PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL?.replace(/\/$/, "");
 const LOCAL_AUDIO_ROUTE_PREFIX = "/audio/";
 const LOCAL_UPLOAD_ROUTE_PREFIX = "/upload/local/";
@@ -47,6 +52,25 @@ interface PendingLocalUpload {
 
 const pendingLocalUploads = new Map<string, PendingLocalUpload>();
 let observedPublicBaseUrl: string | null = DEFAULT_PUBLIC_BASE_URL ?? null;
+let runtimeStorageCleaned = false;
+
+function cleanupEphemeralRuntimeStorage(): void {
+  if (!EPHEMERAL_RUNTIME_STORAGE || runtimeStorageCleaned) return;
+  runtimeStorageCleaned = true;
+  rmSync(LOCAL_STORAGE_ROOT, { force: true, recursive: true });
+}
+
+if (EPHEMERAL_RUNTIME_STORAGE) {
+  process.once("exit", cleanupEphemeralRuntimeStorage);
+  process.once("SIGINT", () => {
+    cleanupEphemeralRuntimeStorage();
+    process.exit(130);
+  });
+  process.once("SIGTERM", () => {
+    cleanupEphemeralRuntimeStorage();
+    process.exit(143);
+  });
+}
 
 const r2Client = hasValidR2Config()
   ? new S3Client({
@@ -294,7 +318,10 @@ export function observePublicBaseUrl(baseUrl?: string | null): void {
 }
 
 export function getStorageMode(): StorageMode {
-  return hasValidR2Config() ? "r2" : "local";
+  // When a dedicated saved-playlist root is configured, ad-hoc uploads and
+  // imports remain process-local. Only an explicit Save Playlist action writes
+  // to the persistent library.
+  return process.env.BEATSYNC_PLAYLISTS_DIR?.trim() ? "local" : hasValidR2Config() ? "r2" : "local";
 }
 
 /**
@@ -430,8 +457,8 @@ export function extractKeyFromUrl(url: string): string | null {
 export async function validateAudioFileExists(audioUrl: string): Promise<boolean> {
   try {
     const pathname = new URL(audioUrl, "http://localhost").pathname;
-    if (isMusicLibraryPath(pathname)) {
-      return await musicLibraryAudioExists(audioUrl);
+    if (isSavedPlaylistPath(pathname)) {
+      return await savedPlaylistAudioExists(audioUrl);
     }
   } catch {
     return false;

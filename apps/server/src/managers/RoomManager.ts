@@ -1,4 +1,4 @@
-import { calculateScheduleTimeMs, DEFAULT_CLIENT_RTT_MS } from "@/config";
+import { calculateScheduleTimeMs, DEFAULT_CLIENT_RTT_MS, isSynchronizedPlayback } from "@/config";
 import { IS_DEMO_MODE } from "@/demo";
 import { deleteObjectsWithPrefix } from "@/lib/r2";
 import { ChatManager } from "@/managers/ChatManager";
@@ -46,11 +46,16 @@ type AudioSourceInput = Omit<AudioSourceType, "sourceKind"> & {
   sourceKind?: AudioSourceType["sourceKind"];
 };
 
-type PlaylistInput = Omit<PlaylistType, "id" | "createdAt" | "updatedAt" | "sourceKind" | "trackUrls" | "tracks"> & {
+type PlaylistInput = Omit<
+  PlaylistType,
+  "id" | "createdAt" | "updatedAt" | "sourceKind" | "trackUrls" | "tracks" | "isSaved" | "isDefault"
+> & {
   id?: string;
   createdAt?: number;
   updatedAt?: number;
   sourceKind?: PlaylistType["sourceKind"];
+  isSaved?: boolean;
+  isDefault?: boolean;
   trackUrls?: string[];
   tracks?: AudioSourceInput[];
 };
@@ -194,6 +199,20 @@ export class RoomManager {
       return;
     }
 
+    if (!IS_DEMO_MODE && !isSynchronizedPlayback()) {
+      // Each browser loads locally and starts when ready; no acknowledgements or timer.
+      sendBroadcast({
+        server,
+        roomId: this.roomId,
+        message: {
+          type: "ROOM_EVENT",
+          event: { type: "LOAD_AUDIO_SOURCE", audioSourceToPlay: audioSource },
+        },
+      });
+      this.broadcastPlay(playAction, server);
+      return;
+    }
+
     // Set up timeout to execute play even if some clients don't respond
     const timeout = setTimeout(() => {
       console.log(`Audio loading timeout reached after ${RoomManager.AUDIO_LOAD_TIMEOUT_MS}ms. Proceeding with play.`);
@@ -252,6 +271,7 @@ export class RoomManager {
     }
 
     if (!this.pendingPlay) {
+      if (!isSynchronizedPlayback()) return;
       console.warn(
         `Room ${this.roomId}: Client ${clientId} reported audio source loaded, but no pending play state found`
       );
@@ -300,7 +320,8 @@ export class RoomManager {
 
   private broadcastPlay(playAction: PlayActionType, server: BunServer): void {
     const previousAudioSource = this.playbackState.audioSource;
-    const serverTimeToExecute = this.getScheduledExecutionTime();
+    const startWhenReady = !IS_DEMO_MODE && !isSynchronizedPlayback();
+    const serverTimeToExecute = startWhenReady ? epochNow() : this.getScheduledExecutionTime();
     const success = this.updatePlaybackSchedulePlay(playAction, serverTimeToExecute);
 
     if (success) {
@@ -313,6 +334,7 @@ export class RoomManager {
           type: "SCHEDULED_ACTION",
           scheduledAction: playAction,
           serverTimeToExecute,
+          startWhenReady,
         },
       });
       console.log(`Scheduled play for ${playAction.audioSource} in room ${this.roomId}`);
@@ -453,6 +475,8 @@ export class RoomManager {
       sourceKind: input.sourceKind ?? "manual",
       externalId: input.externalId,
       originalUrl: input.originalUrl,
+      isSaved: input.isSaved ?? false,
+      isDefault: input.isDefault ?? false,
       createdAt: input.createdAt ?? now,
       updatedAt: input.updatedAt ?? now,
     };
@@ -506,6 +530,20 @@ export class RoomManager {
   setPlaylists(playlists: PlaylistInput[]): PlaylistType[] {
     this.playlists = playlists.map((playlist) => this.sanitizePlaylistInput(playlist));
     return this.playlists;
+  }
+
+  setDefaultPlaylist(playlistId: string): PlaylistType | undefined {
+    const playlist = this.getPlaylist(playlistId);
+    if (!playlist) {
+      return undefined;
+    }
+
+    this.playlists = this.playlists.map((candidate) => ({
+      ...candidate,
+      isDefault: candidate.id === playlistId,
+    }));
+
+    return this.getPlaylist(playlistId);
   }
 
   deletePlaylist(playlistId: string): PlaylistType[] {

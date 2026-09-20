@@ -2,11 +2,16 @@
 
 import { uploadAudioFile } from "@/lib/api";
 import { cn, trimFileName } from "@/lib/utils";
-import { getYoutubeImportMode, normalizeYoutubeUrl, sendYoutubeImportRequest } from "@/lib/youtubeImport";
+import {
+  getYoutubeImportMode,
+  normalizeYoutubeUrl,
+  sendYoutubeImportRequest,
+  sendYoutubeSavePlaylistRequest,
+} from "@/lib/youtubeImport";
 import { useCanMutate, useGlobalStore } from "@/store/global";
 import { useRoomStore } from "@/store/room";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown, CloudUpload, Link2, ListVideo, Loader2, Plus } from "lucide-react";
+import { ChevronDown, CloudUpload, Download, Link2, ListVideo, Loader2, Plus } from "lucide-react";
 import { type ChangeEvent, type DragEvent, type FormEvent, useState } from "react";
 import { toast } from "sonner";
 
@@ -16,6 +21,7 @@ export const AudioUploaderMinimal = () => {
   const [isYoutubeOpen, setIsYoutubeOpen] = useState(false);
   const [isYoutubeSubmitting, setIsYoutubeSubmitting] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [savedPlaylistName, setSavedPlaylistName] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const canMutate = useCanMutate();
   const socket = useGlobalStore((state) => state.socket);
@@ -125,6 +131,26 @@ export const AudioUploaderMinimal = () => {
     } finally {
       setIsYoutubeSubmitting(false);
     }
+  };
+
+  const handleSaveYoutubePlaylist = () => {
+    if (isDisabled || !socket) {
+      if (!socket) toast.error("WebSocket not connected");
+      return;
+    }
+    if (!normalizedYoutubeUrl || youtubeImportMode !== "playlist") {
+      toast.error("Enter a valid YouTube playlist URL");
+      return;
+    }
+
+    sendYoutubeSavePlaylistRequest({
+      ws: socket,
+      url: normalizedYoutubeUrl,
+      name: savedPlaylistName,
+    });
+    setYoutubeUrl("");
+    setSavedPlaylistName("");
+    toast.success("Saved playlist download queued");
   };
 
   const getYoutubeDescription = () => {
@@ -249,6 +275,20 @@ export const AudioUploaderMinimal = () => {
                   />
                 </div>
 
+                {youtubeImportMode === "playlist" && normalizedYoutubeUrl ? (
+                  <div className="mt-2 rounded-md border border-neutral-700/50 bg-neutral-900/60">
+                    <input
+                      type="text"
+                      value={savedPlaylistName}
+                      onChange={(event) => setSavedPlaylistName(event.target.value)}
+                      placeholder="Saved name (uses the YouTube title if blank)"
+                      disabled={isYoutubeSubmitting || isDisabled}
+                      maxLength={120}
+                      className="w-full bg-transparent px-3 py-2.5 text-sm text-white placeholder:text-neutral-500 focus:outline-none"
+                    />
+                  </div>
+                ) : null}
+
                 <div className="mt-2 flex items-center gap-2">
                   <button
                     type="submit"
@@ -262,13 +302,28 @@ export const AudioUploaderMinimal = () => {
                     {isYoutubeSubmitting
                       ? "Queueing..."
                       : youtubeImportMode === "playlist"
-                        ? "Import playlist"
+                        ? "Import once"
                         : "Import video"}
                   </button>
 
                   {youtubeImportMode === "playlist" ? (
+                    <button
+                      type="button"
+                      onClick={handleSaveYoutubePlaylist}
+                      disabled={!normalizedYoutubeUrl || isYoutubeSubmitting || isDisabled}
+                      className={cn(
+                        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/[0.09] active:scale-[0.98]",
+                        "disabled:cursor-not-allowed disabled:bg-neutral-900 disabled:text-neutral-600"
+                      )}
+                    >
+                      <Download className="size-3.5" />
+                      Save playlist
+                    </button>
+                  ) : null}
+
+                  {youtubeImportMode === "playlist" ? (
                     <div className="text-[11px] text-neutral-500 truncate">
-                      Playlists queue every video as tracks.
+                      Import once is temporary. Save playlist downloads a persistent copy.
                     </div>
                   ) : null}
                 </div>

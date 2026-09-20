@@ -185,6 +185,29 @@ single-room mode with `--open-site`:
 bun run lan:prod --single-room --admin-all --open-site
 ```
 
+Playback defaults to starting independently on each browser as soon as its audio
+is ready. Switching tracks does not wait for phones to download the song and does
+not add a scheduling delay based on the slowest device. The Pi's Chromium browser
+must be open in the room with audio enabled and its output routed to the Bluetooth
+speaker; the Bun server stores and serves the files but does not output audio itself.
+An uncached song still needs to load and decode in Chromium before it can play.
+
+Other browsers still receive track changes and can play audio independently; mute
+them if you only want the Bluetooth speaker. To restore the original coordinated
+multi-device playback, set `PLAYBACK_MODE=synchronized` in
+`apps/server/.env.production` and restart the server. Leave it unset (or use
+`PLAYBACK_MODE=independent`) for the default personal-speaker behavior.
+
+Saved YouTube playlist imports reuse audio already present in another saved
+playlist by video ID, avoiding another download. Newly saved MP3s are compared
+by size and SHA-256 against the saved-playlist root, local server storage, and
+`BEATSYNC_MUSIC_DIR` (when configured). Byte-identical files share storage through
+hard links while retaining separate playlist paths. Removing one path leaves the
+others playable. Different encodings are kept separately, and destinations on a
+different filesystem require a separate copy. This happens when saving new tracks;
+it does not periodically rescan the library or clear browser caches. Treat saved
+audio as immutable: replace files rather than editing their bytes in place.
+
 `--open-site` only works with an explicit `--single-room` flag. It opens the
 single room and automatically continues past the "Synchronization Complete"
 screen into the main queue UI. By default it opens `http://vibe.mathnasium.pro`;

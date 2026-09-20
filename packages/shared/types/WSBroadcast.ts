@@ -115,6 +115,8 @@ export type StreamJobUpdateType = z.infer<typeof StreamJobUpdateSchema>;
 export const ScheduledActionSchema = z.object({
   type: z.literal("SCHEDULED_ACTION"),
   serverTimeToExecute: z.number(),
+  // PLAY only: start at the requested position as soon as this browser has audio.
+  startWhenReady: z.boolean().optional(),
   scheduledAction: z.discriminatedUnion("type", [
     PlayActionSchema,
     PauseActionSchema,

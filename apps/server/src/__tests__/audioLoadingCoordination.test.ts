@@ -71,8 +71,11 @@ function getLoadAudioBroadcasts() {
 describe("Audio Loading Coordination", () => {
   let room: RoomManager;
   let server: BunServer;
+  let originalPlaybackMode: string | undefined;
 
   beforeEach(() => {
+    originalPlaybackMode = process.env.PLAYBACK_MODE;
+    process.env.PLAYBACK_MODE = "synchronized";
     broadcastMessages = [];
     room = createRoomWithAudio();
     server = createMockServer();
@@ -81,6 +84,61 @@ describe("Audio Loading Coordination", () => {
   afterEach(() => {
     // Clear any pending timeouts from the room
     room.clearAudioLoadingState();
+    if (originalPlaybackMode === undefined) delete process.env.PLAYBACK_MODE;
+    else process.env.PLAYBACK_MODE = originalPlaybackMode;
+  });
+
+  describe("independent playback (default)", () => {
+    beforeEach(() => {
+      delete process.env.PLAYBACK_MODE;
+      clock = sinon.useFakeTimers();
+    });
+
+    afterEach(() => {
+      clock?.restore();
+      clock = null;
+    });
+
+    it("broadcasts play immediately without acknowledgements or slow-client scheduling", () => {
+      addClientsToRoom(room, 3);
+      room.processNTPRequestFrom({ clientId: "client-3", clientRTT: 10000, clientCompensationMs: 5000 });
+      const before = performance.timeOrigin + performance.now();
+      room.initiateAudioSourceLoad(createPlayAction({ trackTimeSeconds: 42.5 }), "client-1", server);
+      expect(getLoadAudioBroadcasts()).toHaveLength(1);
+      const scheduled = getScheduledActionBroadcasts();
+      expect(scheduled).toHaveLength(1);
+      const message = scheduled[0].message;
+      if (message.type !== "SCHEDULED_ACTION") throw new Error("Expected scheduled action");
+      expect(message.startWhenReady).toBe(true);
+      expect(message.serverTimeToExecute).toBeGreaterThanOrEqual(before);
+      expect(message.serverTimeToExecute).toBeLessThan(before + 100);
+      expect(room.getPlaybackState().trackPositionSeconds).toBe(42.5);
+      room.processClientLoadedAudioSource("client-2", server);
+      clock?.tick(4000);
+      expect(getScheduledActionBroadcasts()).toHaveLength(1);
+    });
+
+    it("starts with only the Pi connected and rejects unknown tracks", () => {
+      addClientsToRoom(room, 1);
+      room.initiateAudioSourceLoad(createPlayAction(), "client-1", server);
+      expect(getScheduledActionBroadcasts()).toHaveLength(1);
+      broadcastMessages = [];
+      room.initiateAudioSourceLoad(createPlayAction({ audioSource: "missing" }), "client-1", server);
+      expect(broadcastMessages).toHaveLength(0);
+    });
+
+    it("replaces a pending synchronized request without letting its timeout replay", () => {
+      addClientsToRoom(room, 2);
+      process.env.PLAYBACK_MODE = "synchronized";
+      room.initiateAudioSourceLoad(createPlayAction(), "client-1", server);
+      process.env.PLAYBACK_MODE = "independent";
+      const nextUrl = "https://example.com/next.mp3";
+      room.addAudioSource({ url: nextUrl });
+      room.initiateAudioSourceLoad(createPlayAction({ audioSource: nextUrl }), "client-1", server);
+      clock?.tick(4000);
+      expect(getScheduledActionBroadcasts()).toHaveLength(1);
+      expect(room.getPlaybackState().audioSource).toBe(nextUrl);
+    });
   });
 
   describe("initiateAudioSourceLoad", () => {

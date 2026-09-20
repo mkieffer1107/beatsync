@@ -1,7 +1,7 @@
 import { IS_DEMO_MODE } from "@/demo";
-import { getDefaultAudioSources } from "@/lib/defaultAudio";
-import { observePublicBaseUrl } from "@/lib/r2";
-import { sendBroadcast } from "@/utils/responses";
+import { applySavedPlaylistToRoom } from "@/lib/savedPlaylistRoom";
+import { getSavedDefaultPlaylistId, listSavedPlaylists } from "@/lib/savedPlaylists";
+import { sendBroadcast, sendUnicast } from "@/utils/responses";
 import { requireCanMutate } from "@/websocket/middlewares";
 import type { HandlerFunction } from "@/websocket/types";
 import type { ExtractWSRequestFrom } from "@beatsync/shared";
@@ -12,37 +12,58 @@ export const handleLoadDefaultTracks: HandlerFunction<ExtractWSRequestFrom["LOAD
 }) => {
   if (IS_DEMO_MODE) return;
   const { room } = requireCanMutate(ws);
-  observePublicBaseUrl(ws.data.serverOrigin);
 
-  const urls = await getDefaultAudioSources(ws.data.serverOrigin);
-  if (urls.length === 0) {
+  const roomDefault = room.getPlaylists().find((playlist) => playlist.isSaved && playlist.isDefault);
+  const defaultPlaylistId = roomDefault?.id ?? (await getSavedDefaultPlaylistId());
+  const defaultPlaylist =
+    (defaultPlaylistId ? room.getPlaylist(defaultPlaylistId) : undefined) ??
+    (await listSavedPlaylists()).find((playlist) => playlist.id === defaultPlaylistId);
+
+  if (!defaultPlaylist) {
+    sendUnicast({
+      ws,
+      message: {
+        type: "IMPORT_STATUS",
+        status: "error",
+        message: "No default saved playlist is configured. Choose Make default in the playlist menu first.",
+      },
+    });
     return;
   }
 
-  // Existing room sources and simple URL set for dedupe
-  const existingUrlSet = new Set(room.getAudioSources().map((s) => s.url));
-
-  // Filter out any defaults already present in the room
-  const toAdd = urls.filter((u) => !existingUrlSet.has(u.url));
-
-  if (toAdd.length === 0) {
-    console.log(`[${ws.data.roomId}] No new default tracks to add (all already present).`);
-    return;
-  }
-
-  // Append only new sources
-  for (const src of toAdd) {
-    room.addAudioSource(src);
-  }
-
-  const updated = room.getAudioSources();
+  const sources = applySavedPlaylistToRoom({
+    room,
+    playlist: { ...defaultPlaylist, isDefault: true },
+    previousPlaylist: room.getPlaylist(defaultPlaylist.id),
+    queueIfNew: true,
+  });
 
   sendBroadcast({
     server,
     roomId: ws.data.roomId,
     message: {
       type: "ROOM_EVENT",
-      event: { type: "SET_AUDIO_SOURCES", sources: updated },
+      event: {
+        type: "SET_AUDIO_SOURCES",
+        sources,
+        currentAudioSource: room.getPlaybackState().audioSource || undefined,
+      },
+    },
+  });
+  sendBroadcast({
+    server,
+    roomId: ws.data.roomId,
+    message: { type: "ROOM_EVENT", event: { type: "SET_PLAYLISTS", playlists: room.getPlaylists() } },
+  });
+  sendUnicast({
+    ws,
+    message: {
+      type: "IMPORT_STATUS",
+      status: "completed",
+      message: `Loaded default playlist "${defaultPlaylist.name}" (${defaultPlaylist.tracks.length} tracks)`,
+      collectionName: defaultPlaylist.name,
+      playlistId: defaultPlaylist.id,
+      importedCount: defaultPlaylist.tracks.length,
     },
   });
 };

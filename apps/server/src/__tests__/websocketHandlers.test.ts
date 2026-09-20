@@ -1,11 +1,16 @@
 import type { WSBroadcastType } from "@beatsync/shared";
-import { describe, expect, it, beforeEach, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createMockServer, createMockWs } from "@/__tests__/mocks/websocket";
 import { handleOpen } from "@/routes/websocketHandlers";
 import { globalManager } from "@/managers/GlobalManager";
 import type { BunServer } from "@/utils/websocket";
 
 let broadcastMessages: { server: BunServer; roomId: string; message: WSBroadcastType }[] = [];
+const originalSavedPlaylistsDirectory = process.env.BEATSYNC_PLAYLISTS_DIR;
+const temporaryDirectories: string[] = [];
 
 void mock.module("@/utils/responses", () => ({
   sendBroadcast: mock(
@@ -32,7 +37,7 @@ function getWsSentMessages(ws: ReturnType<typeof createMockWs>): WSBroadcastType
 }
 
 describe("WebSocket Handlers (Simplified Tests)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clear broadcast messages
     broadcastMessages = [];
 
@@ -41,9 +46,77 @@ describe("WebSocket Handlers (Simplified Tests)", () => {
     for (const roomId of roomIds) {
       globalManager.deleteRoom(roomId);
     }
+
+    const emptySavedPlaylistsRoot = await mkdtemp(path.join(tmpdir(), "beatsync-empty-saved-playlists-"));
+    temporaryDirectories.push(emptySavedPlaylistsRoot);
+    process.env.BEATSYNC_PLAYLISTS_DIR = emptySavedPlaylistsRoot;
+  });
+
+  afterEach(async () => {
+    if (originalSavedPlaylistsDirectory === undefined) {
+      delete process.env.BEATSYNC_PLAYLISTS_DIR;
+    } else {
+      process.env.BEATSYNC_PLAYLISTS_DIR = originalSavedPlaylistsDirectory;
+    }
+    await Promise.all(
+      temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))
+    );
   });
 
   describe("Audio Source Restoration", () => {
+    it("discovers saved playlists without loading them into the queue", async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), "beatsync-saved-playlists-"));
+      temporaryDirectories.push(directory);
+      process.env.BEATSYNC_PLAYLISTS_DIR = directory;
+      const playlistDirectory = path.join(directory, "Vibes");
+      await mkdir(playlistDirectory);
+      await Bun.write(path.join(playlistDirectory, "Library Song [video-1].mp3"), "library-audio");
+      await Bun.write(
+        path.join(playlistDirectory, ".beatsync-playlist.json"),
+        JSON.stringify({
+          version: 1,
+          id: "saved-vibes",
+          name: "Vibes",
+          sourceKind: "youtube",
+          externalId: "playlist-1",
+          originalUrl: "https://www.youtube.com/playlist?list=playlist-1",
+          createdAt: 1,
+          updatedAt: 2,
+          tracks: [
+            {
+              youtubeId: "video-1",
+              title: "Library Song",
+              fileName: "Library Song [video-1].mp3",
+              sourceUrl: "https://www.youtube.com/watch?v=video-1",
+            },
+          ],
+        })
+      );
+
+      const roomId = "library-room";
+      const mockServer = createMockServer();
+      const ws = createMockWs({ clientId: "library-client", username: "listener", roomId });
+
+      handleOpen(ws, mockServer);
+
+      for (let attempt = 0; attempt < 20 && globalManager.getRoom(roomId)?.getPlaylists().length === 0; attempt++) {
+        await Bun.sleep(5);
+      }
+
+      expect(globalManager.getRoom(roomId)?.getAudioSources()).toEqual([]);
+      expect(globalManager.getRoom(roomId)?.getPlaylists()).toHaveLength(1);
+      expect(globalManager.getRoom(roomId)?.getPlaylists()[0]).toMatchObject({
+        id: "saved-vibes",
+        isSaved: true,
+        name: "Vibes",
+      });
+
+      const libraryBroadcast = broadcastMessages.find(
+        (entry) => entry.message.type === "ROOM_EVENT" && entry.message.event.type === "SET_PLAYLISTS"
+      );
+      expect(libraryBroadcast).toBeTruthy();
+    });
+
     it("should send existing audio sources to newly joined client", () => {
       // Create a room with audio sources (simulating restored state)
       const roomId = "restored-room";

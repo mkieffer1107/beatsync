@@ -16,6 +16,8 @@ import { sendWSRequest } from "@/utils/ws";
 import { ClientActionEnum } from "@beatsync/shared";
 import {
   Disc3,
+  Download,
+  HardDrive,
   ListMusic,
   Pause,
   PencilLine,
@@ -25,8 +27,10 @@ import {
   RefreshCw,
   Rows3,
   Shuffle,
+  Star,
   Trash2,
   WandSparkles,
+  X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { toast } from "sonner";
@@ -43,6 +47,9 @@ interface LibraryTrackItem {
 }
 
 const getPlaylistAccentLabel = (playlist: PlaylistLibraryItem) => {
+  if (playlist.isSaved) {
+    return "Saved";
+  }
   if (playlist.sourceKind === "youtube-playlist" || playlist.sourceKind === "youtube") {
     return "YouTube";
   }
@@ -157,6 +164,12 @@ const PlaylistNavItem = ({
             {containsCurrentTrack ? (
               <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-primary-400">Current</span>
             ) : null}
+            {playlist.isDefault ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.18em] text-amber-300">
+                <Star className="size-3 fill-current" />
+                Default
+              </span>
+            ) : null}
           </div>
 
           <div className="mt-2 truncate text-sm font-medium text-white">{playlist.name}</div>
@@ -165,7 +178,11 @@ const PlaylistNavItem = ({
           </div>
 
           <div className="mt-2 truncate text-[11px] uppercase tracking-[0.16em] text-neutral-600">
-            {playlist.origin === "server" ? "Server playlist" : "Built from imported tracks"}
+            {playlist.isSaved
+              ? "Stored on this server"
+              : playlist.origin === "server"
+                ? "Server playlist"
+                : "Built from imported tracks"}
           </div>
         </div>
       </div>
@@ -205,6 +222,7 @@ const TrackListRow = ({
   isPlaying,
   onPlay,
   onDelete,
+  deleteLabel = "Delete",
 }: {
   artworkUrl: string | null;
   title: string;
@@ -217,6 +235,7 @@ const TrackListRow = ({
   isPlaying: boolean;
   onPlay: () => void;
   onDelete?: () => void;
+  deleteLabel?: string;
 }) => {
   const duration = useResolvedAudioDuration(source);
   const canPlay = canMutate && isPlayable;
@@ -287,8 +306,8 @@ const TrackListRow = ({
           type="button"
           onClick={onDelete}
           className="flex size-9 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-neutral-500 transition-colors hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-300"
-          aria-label={`Delete ${title}`}
-          title={`Delete ${title}`}
+          aria-label={`${deleteLabel} ${title}`}
+          title={`${deleteLabel} ${title}`}
         >
           <Trash2 className="size-4" />
         </button>
@@ -319,11 +338,19 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
   const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
   const [libraryView, setLibraryView] = useState<"all" | "playlist">("all");
   const [confirmDeletePlaylistId, setConfirmDeletePlaylistId] = useState<string | null>(null);
+  const [renamingPlaylistId, setRenamingPlaylistId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const visiblePlaylist = selectedPlaylist ?? playlists[0] ?? null;
   const activePlaylistId = selectedPlaylistId ?? visiblePlaylist?.id ?? null;
   const hasLibraryOnlyTracks = visiblePlaylist?.tracks.some((track) => track.queueIndex < 0) ?? false;
-  const canEditVisiblePlaylist = canMutate && visiblePlaylist?.origin === "server";
+  const canEditVisiblePlaylist = canMutate && visiblePlaylist?.origin === "server" && !visiblePlaylist.isSaved;
+  const canSaveVisiblePlaylist =
+    canMutate &&
+    visiblePlaylist?.origin === "server" &&
+    visiblePlaylist?.sourceKind === "youtube" &&
+    !visiblePlaylist.isSaved;
+  const canRenameVisiblePlaylist = canMutate && Boolean(visiblePlaylist?.isSaved);
   const canRefreshVisiblePlaylist =
     canMutate &&
     visiblePlaylist?.origin === "server" &&
@@ -387,6 +414,10 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
   const visiblePlaylistQueuedTrackUrls = useMemo(
     () => visiblePlaylistTrackUrls.filter((url) => queuedTrackUrlSet.has(url)),
     [visiblePlaylistTrackUrls, queuedTrackUrlSet]
+  );
+  const editablePlaylistIds = useMemo(
+    () => new Set(playlists.filter((playlist) => !playlist.isSaved).map((playlist) => playlist.id)),
+    [playlists]
   );
   const isAllTracksContextActive = playbackContext?.scope === "all-tracks";
   const isVisiblePlaylistContextActive =
@@ -628,8 +659,8 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
       return;
     }
 
-    const affectedPlaylists = playlists.filter((playlist) =>
-      playlist.tracks.some((playlistTrack) => playlistTrack.url === track.url)
+    const affectedPlaylists = playlists.filter(
+      (playlist) => !playlist.isSaved && playlist.tracks.some((playlistTrack) => playlistTrack.url === track.url)
     );
 
     affectedPlaylists.forEach((playlist) => {
@@ -656,7 +687,35 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
     }
 
     setConfirmDeletePlaylistId(null);
-    toast.success(`Deleted "${"title" in track ? track.title : "track"}"`);
+    toast.success(
+      track.queueIndex >= 0 ? `Removed "${"title" in track ? track.title : "track"}" from queue` : "Track removed"
+    );
+  };
+
+  const handleSavePlaylist = () => {
+    if (!visiblePlaylist || !ensureMutationAccess()) return;
+    sendWSRequest({
+      ws: socket!,
+      request: {
+        type: ClientActionEnum.enum.SAVE_YOUTUBE_PLAYLIST,
+        playlistId: visiblePlaylist.id,
+        name: visiblePlaylist.name,
+      },
+    });
+  };
+
+  const handleRenameSavedPlaylist = () => {
+    if (!visiblePlaylist || !ensureMutationAccess()) return;
+    const name = renameValue.trim();
+    if (!name || name === visiblePlaylist.name) {
+      setRenamingPlaylistId(null);
+      return;
+    }
+    sendWSRequest({
+      ws: socket!,
+      request: { type: ClientActionEnum.enum.UPDATE_PLAYLIST, playlistId: visiblePlaylist.id, name },
+    });
+    setRenamingPlaylistId(null);
   };
 
   const handleRefreshPlaylist = () => {
@@ -668,6 +727,20 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
       ws: socket!,
       request: {
         type: ClientActionEnum.enum.REFRESH_PLAYLIST,
+        playlistId: visiblePlaylist.id,
+      },
+    });
+  };
+
+  const handleSetDefaultPlaylist = () => {
+    if (!visiblePlaylist || !visiblePlaylist.isSaved || !ensureMutationAccess()) {
+      return;
+    }
+
+    sendWSRequest({
+      ws: socket!,
+      request: {
+        type: ClientActionEnum.enum.SET_DEFAULT_PLAYLIST,
         playlistId: visiblePlaylist.id,
       },
     });
@@ -842,7 +915,14 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                           },
                         });
                       }}
-                      onDelete={canMutate ? () => handleDeleteTrack(track) : undefined}
+                      onDelete={
+                        canMutate &&
+                        (track.queueIndex >= 0 ||
+                          track.playlistIds.some((playlistId) => editablePlaylistIds.has(playlistId)))
+                          ? () => handleDeleteTrack(track)
+                          : undefined
+                      }
+                      deleteLabel={track.queueIndex >= 0 ? "Remove from queue" : "Remove from playlist"}
                     />
                   ))}
                 </div>
@@ -880,7 +960,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                 <div className="px-5 py-5">
                   <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">Playlists</div>
                   <div className="mt-2 text-sm leading-relaxed text-neutral-400">
-                    Saved views of the room library. Choose one to inspect its track order or queue it again.
+                    Saved playlists stay on this server. Choose one, then load it when you want it in the live queue.
                   </div>
                 </div>
 
@@ -934,6 +1014,24 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                               <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
                                 {visiblePlaylist.trackCount} tracks
                               </Badge>
+                              {visiblePlaylist.isSaved ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
+                                >
+                                  <HardDrive className="size-3.5" />
+                                  Persistent
+                                </Badge>
+                              ) : null}
+                              {visiblePlaylist.isDefault ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-300/20 bg-amber-300/10 text-amber-200"
+                                >
+                                  <Star className="size-3.5 fill-current" />
+                                  Default playlist
+                                </Badge>
+                              ) : null}
                               {hasLibraryOnlyTracks ? (
                                 <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-neutral-400">
                                   Saved outside queue
@@ -941,7 +1039,35 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                               ) : null}
                             </div>
 
-                            <div className="mt-3 text-xl font-semibold text-white">{visiblePlaylist.name}</div>
+                            {renamingPlaylistId === visiblePlaylist.id ? (
+                              <div className="mt-3 flex max-w-xl items-center gap-2">
+                                <input
+                                  autoFocus
+                                  value={renameValue}
+                                  onChange={(event) => setRenameValue(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") handleRenameSavedPlaylist();
+                                    if (event.key === "Escape") setRenamingPlaylistId(null);
+                                  }}
+                                  maxLength={120}
+                                  className="min-h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-black/40 px-3 text-base font-semibold text-white outline-none transition-colors focus:border-white/35"
+                                />
+                                <Button size="sm" onClick={handleRenameSavedPlaylist} className="min-h-10">
+                                  Save
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setRenamingPlaylistId(null)}
+                                  aria-label="Cancel rename"
+                                  className="size-10"
+                                >
+                                  <X className="size-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="mt-3 text-xl font-semibold text-white">{visiblePlaylist.name}</div>
+                            )}
                             <div className="mt-1 max-w-3xl text-sm leading-relaxed text-neutral-400">
                               {visiblePlaylist.description ??
                                 "This playlist isolates a saved subset of the room library without replacing the live queue."}
@@ -958,7 +1084,47 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                               className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
                             >
                               <RefreshCw className="size-4" />
-                              Refresh From YouTube
+                              {visiblePlaylist.isSaved ? "Sync With YouTube" : "Refresh From YouTube"}
+                            </Button>
+                          ) : null}
+                          {canSaveVisiblePlaylist ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleSavePlaylist}
+                              className="border-emerald-400/20 bg-emerald-400/10 text-emerald-100 hover:bg-emerald-400/15"
+                            >
+                              <Download className="size-4" />
+                              Save Playlist
+                            </Button>
+                          ) : null}
+                          {canRenameVisiblePlaylist ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setRenameValue(visiblePlaylist.name);
+                                setRenamingPlaylistId(visiblePlaylist.id);
+                              }}
+                              className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
+                            >
+                              <PencilLine className="size-4" />
+                              Rename
+                            </Button>
+                          ) : null}
+                          {canMutate && visiblePlaylist.isSaved ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleSetDefaultPlaylist}
+                              disabled={visiblePlaylist.isDefault}
+                              className={cn(
+                                "border-amber-300/20 bg-amber-300/10 text-amber-100 hover:bg-amber-300/15",
+                                visiblePlaylist.isDefault && "cursor-default opacity-75"
+                              )}
+                            >
+                              <Star className="size-4" />
+                              {visiblePlaylist.isDefault ? "Default playlist" : "Make default"}
                             </Button>
                           ) : null}
                           {canEditVisiblePlaylist ? (
@@ -972,7 +1138,7 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                               Edit Playlist
                             </Button>
                           ) : null}
-                          {canMutate ? (
+                          {canMutate && !visiblePlaylist.isSaved ? (
                             <Button
                               variant="outline"
                               size="sm"
@@ -1004,7 +1170,11 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                             className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.08]"
                           >
                             <ListMusic className="size-4" />
-                            {hasLibraryOnlyTracks ? "Add Playlist To Queue" : "Already In Queue"}
+                            {hasLibraryOnlyTracks
+                              ? visiblePlaylist.isSaved
+                                ? "Load Playlist"
+                                : "Add Playlist To Queue"
+                              : "Already In Queue"}
                           </Button>
                           <Button
                             variant="outline"
@@ -1060,7 +1230,8 @@ export const PlaylistLibrary = ({ className }: { className?: string }) => {
                                 },
                               });
                             }}
-                            onDelete={canMutate ? () => handleDeleteTrack(track) : undefined}
+                            onDelete={canMutate && track.queueIndex >= 0 ? () => handleDeleteTrack(track) : undefined}
+                            deleteLabel="Remove from queue"
                           />
                         ))}
                       </div>

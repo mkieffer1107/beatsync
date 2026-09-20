@@ -248,6 +248,7 @@ export const WebSocketManager = ({ roomId, username }: WebSocketManagerProps) =>
             trackTimeSeconds: scheduledAction.trackTimeSeconds,
             targetServerTime: serverTimeToExecute,
             audioSource: scheduledAction.audioSource,
+            startWhenReady: response.startWhenReady,
           });
         } else if (scheduledAction.type === "PAUSE") {
           schedulePause({

@@ -25,6 +25,11 @@ export function isAdminAllMode(): boolean {
   return isTruthy(process.env.ADMIN_ALL) || isTruthy(process.env.BEATSYNC_ADMIN_ALL);
 }
 
+// Personal speaker setups should never wait for other browsers to download audio.
+export function isSynchronizedPlayback(): boolean {
+  return process.env.PLAYBACK_MODE?.trim().toLowerCase() === "synchronized";
+}
+
 /**
  * Calculate dynamic scheduling delay based on maximum client RTT
  * @param maxRTT Maximum RTT among all clients in milliseconds

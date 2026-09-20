@@ -1,4 +1,5 @@
 export const YOUTUBE_IMPORT_ACTION = "IMPORT_YOUTUBE";
+export const YOUTUBE_SAVE_PLAYLIST_ACTION = "SAVE_YOUTUBE_PLAYLIST";
 
 export type YoutubeImportMode = "playlist" | "video";
 
@@ -6,6 +7,12 @@ export type YoutubeImportRequest = {
   type: typeof YOUTUBE_IMPORT_ACTION;
   url: string;
   mode: YoutubeImportMode;
+};
+
+export type YoutubeSavePlaylistRequest = {
+  type: typeof YOUTUBE_SAVE_PLAYLIST_ACTION;
+  url: string;
+  name?: string;
 };
 
 const YOUTUBE_HOST_SUFFIX = ".youtube.com";
@@ -61,6 +68,16 @@ export const sendYoutubeImportRequest = ({
     type: YOUTUBE_IMPORT_ACTION,
     url,
     mode,
+  };
+
+  ws.send(JSON.stringify(request));
+};
+
+export const sendYoutubeSavePlaylistRequest = ({ ws, url, name }: { ws: WebSocket; url: string; name?: string }) => {
+  const request: YoutubeSavePlaylistRequest = {
+    type: YOUTUBE_SAVE_PLAYLIST_ACTION,
+    url,
+    name: name?.trim() || undefined,
   };
 
   ws.send(JSON.stringify(request));

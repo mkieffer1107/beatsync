@@ -88,7 +88,7 @@ export const LoadDefaultTracksButton = ({ className }: LoadDefaultTracksButtonPr
           </div>
         </div>
       )}
-      <span className={cn(isLoading ? "opacity-0" : "opacity-100")}>Load default tracks</span>
+      <span className={cn(isLoading ? "opacity-0" : "opacity-100")}>Load default playlist</span>
     </motion.button>
   );
 };
