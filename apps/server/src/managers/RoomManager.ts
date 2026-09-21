@@ -125,6 +125,7 @@ export class RoomManager {
 
   private clientData = new Map<string, ClientDataType>(); // map of clientId -> client data
   private wsConnections = new Map<string, ServerWebSocket<WSData>>(); // map of clientId -> ws
+  private lastPongBySocket = new WeakMap<ServerWebSocket<WSData>, number>();
   private audioSources: AudioSourceType[] = [];
   private playlists: PlaylistType[] = [];
   private listeningSource: PositionType = {
@@ -962,17 +963,26 @@ export class RoomManager {
   }
 
   /**
-   * Check if the room has any active clients based on recent NTP heartbeats
-   * This is more reliable than checking WebSocket readyState which can be inconsistent
+   * Browser networking can answer pings even when background-tab JavaScript is throttled.
    */
+  recordPong(ws: ServerWebSocket<WSData>): void {
+    if (this.wsConnections.get(ws.data.clientId) === ws) {
+      this.lastPongBySocket.set(ws, Date.now());
+    }
+  }
+
+  private lastConnectionResponse(client: ClientDataType): number {
+    const ws = this.wsConnections.get(client.clientId);
+    return Math.max(client.lastNtpResponse, (ws && this.lastPongBySocket.get(ws)) ?? 0);
+  }
+
+  /** Check transport liveness independently of the browser's synchronization timer. */
   hasActiveConnections(): boolean {
     const now = Date.now();
     const clients = this.getClients();
 
     for (const client of clients) {
-      // A client is considered active if they've sent an NTP request within the timeout window
-      // This is more reliable than WebSocket readyState during network fluctuations
-      const timeSinceLastResponse = now - client.lastNtpResponse;
+      const timeSinceLastResponse = now - this.lastConnectionResponse(client);
       if (timeSinceLastResponse <= NTP_CONSTANTS.RESPONSE_TIMEOUT_MS) {
         return true;
       }
@@ -1590,7 +1600,7 @@ export class RoomManager {
 
     console.log(`💓 Starting heartbeat for room ${this.roomId}`);
 
-    // Check heartbeats every second
+    // Check transport heartbeats at the steady-state interval.
     this.heartbeatCheckInterval = setInterval(() => {
       const now = Date.now();
       const staleClients: string[] = [];
@@ -1598,13 +1608,16 @@ export class RoomManager {
       // Check each client's last heartbeat
       const activeClients = this.getClients();
       activeClients.forEach((client) => {
-        const timeSinceLastResponse = now - client.lastNtpResponse;
+        const timeSinceLastResponse = now - this.lastConnectionResponse(client);
 
         if (timeSinceLastResponse > NTP_CONSTANTS.RESPONSE_TIMEOUT_MS) {
           console.warn(
             `⚠️ Client ${client.clientId} in room ${this.roomId} has not responded for ${timeSinceLastResponse}ms`
           );
           staleClients.push(client.clientId);
+        } else {
+          // Protocol pongs do not depend on page timers, playlist rendering, or audio decoding.
+          this.wsConnections.get(client.clientId)?.ping();
         }
       });
 

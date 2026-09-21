@@ -52,8 +52,30 @@ Install `yt-dlp` with `pipx`:
 
 ```bash
 pipx ensurepath
-pipx install yt-dlp
+pipx install 'yt-dlp[default]'
 ```
+
+The `default` dependencies include yt-dlp's YouTube JavaScript support package.
+Keep an existing installation current with:
+
+```bash
+pipx runpip yt-dlp install --upgrade 'yt-dlp[default]'
+```
+
+YouTube extraction also needs a supported JavaScript runtime. Install Deno using
+the [official instructions](https://docs.deno.com/runtime/getting_started/installation/).
+For a Pi service with a restricted `PATH`, add its absolute path to the yt-dlp
+user configuration at `~/.config/yt-dlp/config`, for example:
+
+```text
+--js-runtimes deno:/home/bot/.local/bin/deno
+```
+
+Use the actual installation path for your user. The deployed `pi.local` uses
+Deno there and yt-dlp in its existing pipx environment. See
+[yt-dlp's JavaScript setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+An HTTP 403 or unavailable-format error alone does not establish that cookies
+are required; update the downloader and runtime before diagnosing authentication.
 
 Open a new shell after `pipx ensurepath`, or run:
 
@@ -197,6 +219,62 @@ them if you only want the Bluetooth speaker. To restore the original coordinated
 multi-device playback, set `PLAYBACK_MODE=synchronized` in
 `apps/server/.env.production` and restart the server. Leave it unset (or use
 `PLAYBACK_MODE=independent`) for the default personal-speaker behavior.
+
+The connection heartbeat allows a 15-second gap before disconnecting a browser.
+This gives the Pi time to recover from short playlist-rendering or audio-decoding
+stalls; the previous 3.75-second timeout could return a working kiosk to the room
+entry screen.
+The server also sends WebSocket protocol pings and accepts their replies as proof
+of a live connection. Background tabs can answer these even when the browser
+throttles the JavaScript timer used for synchronization; timing measurements still
+come only from NTP probes.
+
+### Bluetooth audio on the deployed Pi
+
+The `pi.local` deployment uses a Firefox kiosk managed by
+`/usr/local/bin/mathnasium-kiosk`. Its Echo connector,
+`/usr/local/libexec/mathnasium-echo-connect`, waits for PipeWire and the Bluetooth
+Audio Source profile before connecting the speaker's A2DP Audio Sink profile.
+The routing loop only moves streams that are currently on a different sink.
+These machine-specific scripts live outside this repository.
+
+For crackling under CPU load, check audio scheduling with
+`ps -eLo comm,cls,rtprio` and underruns with `pw-top`. This Pi has `rtkit` installed
+so PipeWire's audio threads can run with realtime priority. Its desktop realtime
+portal failed with `Could not get pidns`, so PipeWire uses RTKit directly through
+the following configuration in both
+`~/.config/pipewire/pipewire.conf.d/90-mathnasium-realtime.conf` and
+`~/.config/pipewire/pipewire-pulse.conf.d/90-mathnasium-realtime.conf`:
+
+```conf
+module.rt.args = {
+    rtportal.enabled = false
+    rtkit.enabled = true
+}
+```
+
+After changing these files, restart the user audio services with
+`systemctl --user restart pipewire pipewire-pulse wireplumber`, then reconnect
+the speaker. This interrupts audio. Verify that the PipeWire and PipeWire-Pulse
+data-loop threads show `RR` and a realtime priority, and that playback has no
+increasing error count in `pw-top`. See the
+[PipeWire realtime module documentation](https://docs.pipewire.org/page_module_rt.html)
+for these settings. The original host scripts and connector service were backed
+up under `/home/bot/beatsync-maintenance/20260920-143021-audio` before this repair.
+
+On this Pi, the retired Sengled lights service also interfered with speaker
+playback: its five-minute keepalive retried a missing bulb by restarting a Noble
+worker, whose raw HCI backend reset the shared Bluetooth adapter. BlueZ could
+still report the Echo connected even though controller queries returned
+`Unknown Connection Identifier` and Bluetooth pings failed. The unused
+`mathnasium-lights.service`, `/opt/lights` installation, and Caddy
+`light.caddy` site were removed on 2026-09-20. An inactive, root-only recovery
+archive is under `/home/bot/beatsync-maintenance/20260920-sengled-removal`.
+Do not run a raw HCI application that resets this adapter alongside speaker
+playback. When diagnosing a recurrence, check the actual Bluetooth link as well
+as PipeWire underruns and BlueZ's `Connected` property.
+
+### Saved playlist storage
 
 Saved YouTube playlist imports reuse audio already present in another saved
 playlist by video ID, avoiding another download. Newly saved MP3s are compared
@@ -654,8 +732,13 @@ LOCAL_STORAGE_ROOT=./storage
 PUBLIC_BASE_URL=http://vibe.mathnasium.pro
 SERVER_HOST=127.0.0.1
 SERVER_PORT=8080
-YTDLP_COOKIES_FROM_BROWSER=chrome
 ```
+
+Only configure `YTDLP_COOKIES_FILE` or `YTDLP_COOKIES_FROM_BROWSER` if YouTube
+explicitly requires a session that can access the requested video. Browser
+cookies must come from a profile on the Pi; naming your laptop's browser does
+not make its session available to the server. Use the active production env
+file (`apps/server/.env.production` for `lan:prod`) for these settings.
 
 Because `LOCAL_STORAGE_ROOT` is relative and the server runs from `apps/server`,
 uploaded files and backups stay inside the repo at `apps/server/storage`.

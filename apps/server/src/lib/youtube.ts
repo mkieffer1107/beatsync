@@ -372,7 +372,7 @@ function getYoutubeDownloadAttempts(track: YoutubeImportTrack): YtDlpAttempt[] {
   }));
 }
 
-function formatYoutubeDownloadError(params: { errors: Error[]; ytDlpBinary: ResolvedYtDlpBinary }): Error {
+export function formatYoutubeDownloadError(params: { errors: Error[]; ytDlpBinary: ResolvedYtDlpBinary }): Error {
   const { errors, ytDlpBinary } = params;
   const lastError = errors[errors.length - 1];
   const combined = errors.map((error) => error.message).join("\n");
@@ -380,23 +380,28 @@ function formatYoutubeDownloadError(params: { errors: Error[]; ytDlpBinary: Reso
 
   if (/Requested format is not available/i.test(combined)) {
     hints.push(
-      "The server retried multiple yt-dlp format fallbacks, but YouTube still rejected the selected media format."
+      "YouTube did not provide a usable download format. Update yt-dlp with its default dependencies and configure a supported JavaScript runtime, then retry."
     );
   }
 
   if (
-    /Sign in to confirm you(?:'|’)re not a bot|cookies-from-browser|HTTP Error 403|The page needs to be reloaded/i.test(
+    /Sign in to confirm you(?:'|’)re not a bot|Sign in to confirm your age|Login required|This video is private/i.test(
       combined
     )
   ) {
     hints.push(
-      "This video currently needs an authenticated YouTube session. Set YTDLP_COOKIES_FROM_BROWSER=chrome (or another supported browser) in apps/server/.env and restart the server."
+      "YouTube explicitly requested sign-in or access to a private video. If your account can view it, configure YTDLP_COOKIES_FILE or YTDLP_COOKIES_FROM_BROWSER in the server's active environment file (.env.production for lan:prod), then restart. The browser profile must exist on the server."
+    );
+  } else if (/HTTP Error 403|The page needs to be reloaded/i.test(combined)) {
+    hints.push(
+      "YouTube refused the media request. This can happen with outdated extraction support or temporary YouTube restrictions; it does not by itself establish that sign-in is required."
     );
   }
 
-  if (ytDlpBinary.version && compareParsedVersions(parseYtDlpVersion(ytDlpBinary.version), [2026, 3, 17]) < 0) {
+  const [year, month, day] = parseYtDlpVersion(ytDlpBinary.version ?? "") ?? [];
+  if (year && month && day && Date.now() - Date.UTC(year, month - 1, day) > 90 * 24 * 60 * 60 * 1000) {
     hints.push(
-      `Your yt-dlp binary looks old (${ytDlpBinary.version}). Install a newer build or set YTDLP_BINARY to a current yt-dlp executable. On macOS, a current master/nightly build is often required for YouTube imports.`
+      `Your yt-dlp build (${ytDlpBinary.version}) is over 90 days old. Update it together with its default dependencies, or set YTDLP_BINARY to an updated installation.`
     );
   }
 

@@ -10,7 +10,7 @@ import { handleRoot } from "@/routes/root";
 import { handleStats } from "@/routes/stats";
 import { handleGetPresignedURL, handleLocalUpload, handleUploadComplete } from "@/routes/upload";
 import { handleWebSocketUpgrade } from "@/routes/websocket";
-import { handleClose, handleMessage, handleOpen } from "@/routes/websocketHandlers";
+import { handleClose, handleMessage, handleOpen, handlePong } from "@/routes/websocketHandlers";
 import { corsHeaders, errorResponse } from "@/utils/responses";
 import type { WSData } from "@/utils/websocket";
 
@@ -117,6 +117,9 @@ const server = Bun.serve<WSData>({
 
     close(ws) {
       handleClose(ws, server);
+    },
+    pong(ws) {
+      handlePong(ws);
     },
   },
 });

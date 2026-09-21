@@ -274,6 +274,10 @@ export const handleMessage = async (ws: ServerWebSocket<WSData>, message: string
   }
 };
 
+export const handlePong = (ws: ServerWebSocket<WSData>) => {
+  globalManager.getRoom(ws.data.roomId)?.recordPong(ws);
+};
+
 export const handleClose = (ws: ServerWebSocket<WSData>, server: BunServer) => {
   try {
     console.log(`WebSocket connection closed for user ${ws.data.username} in room ${ws.data.roomId}`);

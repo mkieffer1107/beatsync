@@ -4,8 +4,48 @@ import {
   extractYoutubeContinuationTokens,
   extractYoutubeTracksFromWebData,
   getYoutubeMetadataArgs,
+  formatYoutubeDownloadError,
   resolveYoutubeImportRequest,
 } from "@/lib/youtube";
+
+describe("youtube download diagnostics", () => {
+  const ytDlpBinary = { command: "yt-dlp", version: null };
+
+  it("does not diagnose authentication from a generic 403 followed by unavailable formats", () => {
+    const error = formatYoutubeDownloadError({
+      ytDlpBinary,
+      errors: [new Error("HTTP Error 403: Forbidden"), new Error("Requested format is not available")],
+    });
+    expect(error.message).toContain("supported JavaScript runtime");
+    expect(error.message).not.toContain("YTDLP_COOKIES");
+  });
+
+  it("does not diagnose authentication from a reload request or generic cookie advice", () => {
+    const error = formatYoutubeDownloadError({
+      ytDlpBinary,
+      errors: [new Error("The page needs to be reloaded; try --cookies-from-browser")],
+    });
+    expect(error.message).not.toContain("YouTube explicitly requested sign-in");
+  });
+
+  it("explains server-side cookies when YouTube explicitly requests sign-in", () => {
+    const error = formatYoutubeDownloadError({
+      ytDlpBinary,
+      errors: [new Error("Sign in to confirm you're not a bot")],
+    });
+    expect(error.message).toContain("YTDLP_COOKIES_FILE");
+    expect(error.message).toContain(".env.production");
+    expect(error.message).toContain("browser profile must exist on the server");
+  });
+
+  it("flags builds older than 90 days without a permanently fixed version cutoff", () => {
+    const error = formatYoutubeDownloadError({
+      ytDlpBinary: { command: "yt-dlp", version: "2020.01.01" },
+      errors: [new Error("Download failed")],
+    });
+    expect(error.message).toContain("over 90 days old");
+  });
+});
 
 describe("youtube import planning", () => {
   it("uses no-playlist metadata args for single-video imports", () => {
